@@ -1001,14 +1001,15 @@ function episodeToItem(ep: Episode, show: Show, userId = DEFAULT_ADMIN_USER_ID) 
     ParentIndexNumber:     ep.seasonNumber,
     RunTimeTicks:          runtimeTicks,
     Path:                  fakePath,
-    ImageTags:             ep.stillPath ? { Primary: 'still' } : {},
+    ImageTags:             ep.stillPath ? { Primary: 'still' } : (showBackdropTag ? { Primary: showBackdropTag } : {}),
     PrimaryImageTag:       undefined,
     BackdropImageTags:     [],
     ParentId:              seasonId,
     SeriesPrimaryImageTag: showPosterTag,
+    SeriesThumbImageTag:   showBackdropTag,
     SeasonPrimaryImageTag: undefined,
     ParentThumbItemId:     seriesId,
-    ParentThumbImageTag:   showPosterTag,
+    ParentThumbImageTag:   showBackdropTag ?? showPosterTag,
     ParentBackdropItemId:  seriesId,
     ParentBackdropImageTags: showBackdropTag ? [showBackdropTag] : [],
     ParentLogoItemId:      showLogoTag ? seriesId : undefined,
@@ -1749,6 +1750,7 @@ export async function jellyfinRoutes(app: FastifyInstance) {
       const season = getSeason(epRef.showTmdbId, epRef.seasonNum)
       if (isThumb && show?.backdropPath) return sendImageUrl(reply, headers, show.backdropPath, 'backdrop', query)
       if (ep?.stillPath) return sendImageUrl(reply, headers, ep.stillPath, kind, query)
+      if (show?.backdropPath) return sendImageUrl(reply, headers, show.backdropPath, 'backdrop', query)
       if (season?.posterPath) return sendImageUrl(reply, headers, season.posterPath, 'poster', query)
       if (show?.posterPath) return sendImageUrl(reply, headers, show.posterPath, 'poster', query)
       return reply.code(404).send()
