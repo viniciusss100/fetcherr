@@ -63,10 +63,6 @@
       <div class="stat-value" id="statShows">—</div>
       <div class="stat-label">TV Shows</div>
     </div>
-    <div class="stat hidden filterable" id="statCardHidden" onclick="setStatusFilter('hidden')" style="display:none">
-      <div class="stat-value" id="statHidden">—</div>
-      <div class="stat-label">Hidden</div>
-    </div>
   </div>
 
   <div class="sync-bar">
@@ -102,6 +98,13 @@
       <option value="year:DESC">Newest release</option>
       <option value="year:ASC">Oldest release</option>
     </select>
+    <button type="button" id="hiddenCountBadge" class="hidden-count-badge" onclick="setStatusFilter('hidden')" title="Show hidden titles" style="display:none">
+      <svg width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/>
+        <line x1="1" y1="1" x2="23" y2="23"/>
+      </svg>
+      <span id="hiddenCountLabel">0 hidden</span>
+    </button>
     <button type="button" class="btn primary add-title-btn" onclick="openSearch()" title="Search catalog to add a title">
       <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
         <path d="M12 5v14M5 12h14"/>
@@ -220,11 +223,15 @@
     const d = await res.json()
     document.getElementById('statMovies').textContent = d.movies
     document.getElementById('statShows').textContent  = d.shows
-    document.getElementById('statHidden').textContent = d.hidden ?? 0
-    document.getElementById('statCardHidden').style.display = currentUserIsAdmin ? '' : 'none'
-    document.getElementById('statCardHidden').classList.toggle('active', getStatusFilter() === 'hidden')
     document.getElementById('lastSync').textContent   = d.lastSyncAt ? fmtDate(d.lastSyncAt) : '—'
     document.getElementById('nextSync').textContent   = d.nextSyncAt ? fmtRelTime(d.nextSyncAt) : '—'
+    const hiddenCount = d.hidden ?? 0
+    const hiddenBadge = document.getElementById('hiddenCountBadge')
+    const hiddenLabel = document.getElementById('hiddenCountLabel')
+    if (hiddenBadge && hiddenLabel) {
+      hiddenLabel.textContent = `${hiddenCount} hidden`
+      hiddenBadge.style.display = currentUserIsAdmin && hiddenCount > 0 ? '' : 'none'
+    }
   }
 
   function getSort() {
@@ -268,7 +275,6 @@
     if (!currentUserIsAdmin && getStatusFilter() === 'hidden') {
       document.getElementById('statusFilter').value = 'all'
     }
-    document.getElementById('statCardHidden').classList.toggle('active', getStatusFilter() === 'hidden')
     loadItems()
   }
 
@@ -545,11 +551,13 @@
     el.innerHTML = items.map(item => {
       const itemType = item._type || tab  // 'movies' or 'shows'
       const isShow   = itemType === 'shows'
-      const emoji    = isShow ? '📺' : '🎬'
+      const posterFallback = isShow
+        ? `<svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" opacity=".4"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>`
+        : `<svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" opacity=".4"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M2 10h20M7 6V4M17 6V4M7 20v-2M17 20v-2"/></svg>`
       const poster   = item.posterUrl
         ? `<img class="item-poster" src="${item.posterUrl}" alt="" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">`
-        + `<div class="item-poster-placeholder" style="display:none">${emoji}</div>`
-        : `<div class="item-poster-placeholder">${emoji}</div>`
+        + `<div class="item-poster-placeholder" style="display:none">${posterFallback}</div>`
+        : `<div class="item-poster-placeholder">${posterFallback}</div>`
 
       const imdbLink = item.imdbId
         ? `<a class="item-link" href="https://www.imdb.com/title/${item.imdbId}" target="_blank" onclick="event.stopPropagation()">IMDb ↗</a>`
@@ -567,13 +575,13 @@
           metaRight = typePill + seasons
         } else {
           const runtime = item.runtimeMins ? `<span class="pill">${item.runtimeMins}m</span>` : ''
-          const pending = item.pendingLabel ? `<span class="pill amber">${item.pendingLabel}</span>` : ''
+          const pending = item.pendingLabel ? `<span class="pill amber sm">${item.pendingLabel}</span>` : ''
           metaRight = typePill + pending + runtime
         }
       } else if (!isShow) {
         const genres  = (item.genres || []).slice(0, 2).map(g => `<span class="pill">${g}</span>`).join('')
         const runtime = item.runtimeMins ? `<span class="pill">${item.runtimeMins}m</span>` : ''
-        const pending = item.pendingLabel ? `<span class="pill amber">${item.pendingLabel}</span>` : ''
+        const pending = item.pendingLabel ? `<span class="pill amber sm">${item.pendingLabel}</span>` : ''
         metaRight = pending + genres + runtime
       } else {
         const statusColor = item.status === 'Ended' || item.status === 'Canceled' ? '' : 'green'
@@ -587,9 +595,9 @@
         const sourcePills = (item.sourceLabels || [])
           .filter(label => label !== 'Manual')
           .slice(0, 2)
-          .map(label => `<span class="pill">${escapeHtml(label)}</span>`)
+          .map(label => `<span class="pill sm">${escapeHtml(label)}</span>`)
           .join('')
-        metaRight = `${typePill}<span class="pill amber">Hidden</span>${sourcePills}`
+        metaRight = `${typePill}<span class="pill amber sm">Hidden</span>${sourcePills}`
       }
 
       return `<div class="item" onclick="activeDetailTab='overview'; openItemDetail('${type}', ${item.tmdbId})">
@@ -611,7 +619,6 @@
     currentTab = currentTab === tab ? 'all' : tab
     document.getElementById('statCardMovies').classList.toggle('active', currentTab === 'movies')
     document.getElementById('statCardShows').classList.toggle('active', currentTab === 'shows')
-    document.getElementById('statCardHidden').classList.toggle('active', getStatusFilter() === 'hidden')
     loadItems()
   }
 
@@ -755,9 +762,12 @@
 
   function renderDetail(item) {
     const isShow = item.type === 'tv'
+    const detailFallback = isShow
+      ? `<svg width="32" height="32" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" opacity=".35"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>`
+      : `<svg width="32" height="32" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" opacity=".35"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M2 10h20M7 6V4M17 6V4M7 20v-2M17 20v-2"/></svg>`
     const poster = item.posterUrl
       ? `<img class="detail-poster" src="${item.posterUrl}" alt="">`
-      : `<div class="detail-poster-ph">${isShow ? '📺' : '🎬'}</div>`
+      : `<div class="detail-poster-ph">${detailFallback}</div>`
     const libraryPill = item.visibleToInfuse
       ? '<span class="pill green">Visible to Infuse</span>'
       : '<span class="pill amber">Hidden from Infuse</span>'
@@ -894,7 +904,7 @@
           ${item.collectionItems.map(entry => {
             const poster = entry.posterUrl
               ? `<img class="collection-item-poster" src="${entry.posterUrl}" alt="">`
-              : '<div class="collection-item-ph">🎬</div>'
+              : `<div class="collection-item-ph"><svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" opacity=".4"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M2 10h20M7 6V4M17 6V4M7 20v-2M17 20v-2"/></svg></div>`
             const action = entry.inLibrary
               ? '<span class="badge-in-lib">In Library</span>'
               : `<button class="btn-add" onclick="addCollectionMovie(${entry.tmdbId}, this)">Add</button>`
@@ -1057,14 +1067,9 @@
         document.getElementById('adminSettingsBtn').style.display = ''
       } else {
         currentUserIsAdmin = false
-      }
-      const hiddenOption = document.getElementById('statusFilterHiddenOption')
-      if (hiddenOption) {
-        hiddenOption.hidden = !currentUserIsAdmin
-        hiddenOption.disabled = !currentUserIsAdmin
-      }
-      if (!currentUserIsAdmin && getStatusFilter() === 'hidden') {
-        document.getElementById('statusFilter').value = 'all'
+        const hiddenOption = document.getElementById('statusFilterHiddenOption')
+        if (hiddenOption) { hiddenOption.hidden = true; hiddenOption.disabled = true }
+        if (getStatusFilter() === 'hidden') document.getElementById('statusFilter').value = 'all'
       }
     }
   }
@@ -1175,10 +1180,13 @@
       return
     }
     el.innerHTML = results.map(r => {
+      const rFallback = r.type === 'tv'
+        ? `<svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" opacity=".4"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>`
+        : `<svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" opacity=".4"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M2 10h20M7 6V4M17 6V4M7 20v-2M17 20v-2"/></svg>`
       const poster = r.poster
         ? `<img class="result-poster" src="${r.poster}" alt="" loading="lazy" onerror="this.style.display='none';this.nextSibling.style.display='flex'">`
-          + `<div class="result-poster-ph" style="display:none">${r.type === 'tv' ? '📺' : '🎬'}</div>`
-        : `<div class="result-poster-ph">${r.type === 'tv' ? '📺' : '🎬'}</div>`
+          + `<div class="result-poster-ph" style="display:none">${rFallback}</div>`
+        : `<div class="result-poster-ph">${rFallback}</div>`
       const tvPrimaryMode = defaultShowAddMode === 'latest' ? 'latest' : 'all'
       const tvSecondaryMode = tvPrimaryMode === 'latest' ? 'all' : 'latest'
       const action = r.inLibrary || inLibrarySet.has(r.tmdbId)

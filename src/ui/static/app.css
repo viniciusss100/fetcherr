@@ -550,33 +550,14 @@ label {
 
 .stats {
   display: grid;
-  grid-template-columns: repeat(4, minmax(130px, 1fr));
+  grid-template-columns: repeat(2, minmax(150px, 1fr));
   gap: 10px;
   margin-bottom: 16px;
 }
 
 .stat {
-  position: relative;
   min-height: 92px;
-  padding: 16px 16px 14px;
-  overflow: hidden;
-}
-
-.stat::before {
-  content: "";
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 3px;
-  background: var(--accent);
-  opacity: .78;
-}
-
-.stat.movies::before {
-  background: var(--green);
-}
-
-.stat.shows::before {
-  background: var(--violet);
+  padding: 16px 18px 14px;
 }
 
 .stat.filterable {
@@ -622,10 +603,6 @@ label {
 
 .stat.shows .stat-value {
   color: var(--violet);
-}
-
-.stat.hidden::before {
-  background: var(--amber);
 }
 
 .stat.hidden .stat-value {
@@ -1235,12 +1212,44 @@ label {
   background: var(--red-dim);
 }
 
+.pill.sm {
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
 .pill-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: currentColor;
   opacity: .82;
+}
+
+.hidden-count-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  height: 100%;
+  min-height: 38px;
+  padding: 8px 11px;
+  border: 1px solid var(--amber-border);
+  border-radius: var(--radius);
+  background: var(--amber-dim);
+  color: #ffedc2;
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background .15s, border-color .15s;
+}
+
+.hidden-count-badge:hover {
+  background: rgba(243, 188, 81, .22);
+  border-color: rgba(243, 188, 81, .5);
 }
 
 .modal-overlay,
