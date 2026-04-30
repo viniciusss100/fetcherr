@@ -1462,7 +1462,8 @@ export async function jellyfinRoutes(app: FastifyInstance) {
     for (const [k, v] of Object.entries(rawQuery)) q[k.toLowerCase()] = v
     const limit = parseInt(q.limit ?? '16', 10)
     const offset = parseInt(q.startindex ?? '0', 10)
-    const nextUpItems = await withReadCache(`nextup:${user.id}`, async () => {
+    const seriesTmdbId = q.seriesid ? idToShowTmdb(q.seriesid) : null
+    const allNextUp = await withReadCache(`nextup:${user.id}`, async () => {
       const playedIds = getAllPlayedItemIds(user.id)
       const resumeIds = new Set(listResumeItemIds(10_000, 0, user.id))
       return filterShowsForUser(user, listShows({ limit: 100_000, userId: user.id, ...API_LIBRARY_FILTER }))
@@ -1479,6 +1480,9 @@ export async function jellyfinRoutes(app: FastifyInstance) {
         })
     })
 
+    const nextUpItems = seriesTmdbId
+      ? allNextUp.filter(({ show }) => show.tmdbId === seriesTmdbId)
+      : allNextUp
     const paged = nextUpItems.slice(offset, offset + limit)
     return {
       Items: paged.map(({ show, ep }) => episodeToItem(ep, show, user.id)),
