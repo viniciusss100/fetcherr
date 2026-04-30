@@ -214,7 +214,8 @@ function hasOnlyUndeterminedAudio(languages: string[]): boolean {
   const normalized = languages
     .map(lang => lang.trim().toLowerCase())
     .filter(Boolean)
-  return normalized.length > 0 && normalized.every(lang => lang === 'und' || lang === 'undetermined')
+  // 'und' = undetermined, 'zxx' = no linguistic content (dialogue-free / language-neutral media)
+  return normalized.length > 0 && normalized.every(lang => lang === 'und' || lang === 'undetermined' || lang === 'zxx')
 }
 
 async function resolveAndRedirect(
