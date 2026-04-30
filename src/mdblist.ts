@@ -176,7 +176,62 @@ function extractPublicListEntries(html: string): MdblistEntry[] {
   return entries
 }
 
+interface MdblistApiItem {
+  ids?: { tmdb?: number }
+}
+
+async function fetchApiListEntries(listUrl: string, apiKey: string): Promise<MdblistEntry[]> {
+  const path = listPathFromUrl(listUrl)
+  const entries: MdblistEntry[] = []
+  const seen = new Set<string>()
+  const limit = 100
+  let offset = 0
+
+  while (true) {
+    const url = `https://api.mdblist.com/lists/${path}/items?limit=${limit}&offset=${offset}&apikey=${encodeURIComponent(apiKey)}`
+    let res: Response
+    try {
+      res = await fetch(url, {
+        headers: { 'User-Agent': 'fetcherr/1.0' },
+        signal: AbortSignal.timeout(20_000),
+      })
+    } catch (err) {
+      throw new Error(`MDBList API request failed: ${err}`)
+    }
+    if (!res.ok) {
+      const body = await res.text().catch(() => '')
+      throw new Error(`MDBList API ${res.status}: ${body.slice(0, 200)}`)
+    }
+    const data = await res.json() as { movies?: MdblistApiItem[]; shows?: MdblistApiItem[] }
+    const pageMovies = data.movies ?? []
+    const pageShows = data.shows ?? []
+
+    for (const item of pageMovies) {
+      const tmdbId = item.ids?.tmdb
+      if (!tmdbId || !Number.isFinite(tmdbId) || tmdbId <= 0) continue
+      const key = `movie:${tmdbId}`
+      if (!seen.has(key)) { seen.add(key); entries.push({ tmdbId, mediaType: 'movie' }) }
+    }
+    for (const item of pageShows) {
+      const tmdbId = item.ids?.tmdb
+      if (!tmdbId || !Number.isFinite(tmdbId) || tmdbId <= 0) continue
+      const key = `show:${tmdbId}`
+      if (!seen.has(key)) { seen.add(key); entries.push({ tmdbId, mediaType: 'show' }) }
+    }
+
+    if (pageMovies.length + pageShows.length < limit) break
+    offset += limit
+  }
+
+  return entries
+}
+
 async function fetchMdblistEntries(listUrl: string): Promise<MdblistEntry[]> {
+  if (config.mdblistApiKey) {
+    const entries = await fetchApiListEntries(listUrl, config.mdblistApiKey)
+    if (!entries.length) throw new Error('MDBList API returned no items for this list')
+    return entries
+  }
   const html = await fetchPublicListHtml(listUrl)
   const entries = extractPublicListEntries(html)
   if (!entries.length) {

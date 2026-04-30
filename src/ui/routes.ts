@@ -651,6 +651,7 @@ export async function uiRoutes(app: FastifyInstance) {
       traktWatchHistory: config.traktWatchHistory,
       traktCollections: config.traktCollections,
       mdblistLists: config.mdblistLists.join('\n'),
+      hasMdblistApiKey: !!getSetting('mdblistApiKey'),
       showAddDefaultMode: config.showAddDefaultMode,
       movieReleaseMode: config.movieReleaseMode,
       traktLists:        config.traktLists,
@@ -723,7 +724,7 @@ export async function uiRoutes(app: FastifyInstance) {
     if (!user || user.role !== 'admin') return reply.code(403).send({ error: 'Admin access required' })
     const body = (req.body ?? {}) as Record<string, string | string[] | boolean>
     const editable: (keyof typeof config)[] = [
-      'sootioUrl', 'rdApiKey', 'tmdbApiKey', 'tvdbApiKey', 'serverUrl', 'traktClientId', 'traktClientSecret',
+      'sootioUrl', 'rdApiKey', 'tmdbApiKey', 'tvdbApiKey', 'serverUrl', 'traktClientId', 'traktClientSecret', 'mdblistApiKey',
     ]
     for (const key of editable) {
       if (typeof body[key] === 'string') {

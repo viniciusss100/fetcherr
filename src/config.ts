@@ -68,6 +68,7 @@ export const config = {
   traktWatchlistShows:  parseBooleanSetting(process.env.TRAKT_WATCHLIST_SHOWS, true),
   traktWatchHistory: parseBooleanSetting(process.env.TRAKT_WATCH_HISTORY, false),
   traktCollections: parseBooleanSetting(process.env.TRAKT_COLLECTIONS, false),
+  mdblistApiKey: process.env.MDBLIST_API_KEY ?? '',
   mdblistLists: parseMdblistLists(process.env.MDBLIST_LISTS ?? ''),
   mdblistMaxItems: parsePositiveIntegerSetting(process.env.MDBLIST_MAX_ITEMS, 1000),
   showAddDefaultMode: parseShowAddDefaultMode(process.env.SHOW_ADD_DEFAULT_MODE),

@@ -238,9 +238,16 @@
       <a class="btn btn-sm" href="https://mdblist.com/toplists/" target="_blank" rel="noreferrer">Browse Top Lists</a>
     </div>
     <div class="field">
+      <label for="mdblistApiKey">API Key <span class="optional-tag">Optional</span> <span id="mdblistConfigState" class="config-state" hidden></span></label>
+      <div class="input-row">
+        <input id="mdblistApiKey" type="password" placeholder="Enter your MDBList API key">
+      </div>
+      <div class="field-note">Required for lists with more than 48 items. Get your free key at <a href="https://mdblist.com/preferences/" target="_blank" rel="noreferrer">mdblist.com/preferences</a>.</div>
+    </div>
+    <div class="field">
       <label for="mdblistLists">List URLs</label>
       <textarea id="mdblistLists" placeholder="https://mdblist.com/lists/user/list-name"></textarea>
-      <div class="field-note">Add one URL per line. Use individual list URLs, not the Top Lists directory. Fetcherr imports up to 1,000 visible TMDB links per list by default.</div>
+      <div class="field-note">Add one URL per line. Use individual list URLs, not the Top Lists directory.</div>
     </div>
   </section>
 
@@ -323,6 +330,7 @@
   let hasStoredTmdbApiKey = false
   let hasStoredTvdbApiKey = false
   let hasStoredTraktClientSecret = false
+  let hasStoredMdblistApiKey = false
   let managedUsers = []
   let deletedUserIds = new Set()
   let userModalMode = 'create'
@@ -508,6 +516,7 @@
     hasStoredTmdbApiKey = !!d.hasTmdbApiKey
     hasStoredTvdbApiKey = !!d.hasTvdbApiKey
     hasStoredTraktClientSecret = !!d.hasTraktClientSecret
+    hasStoredMdblistApiKey = !!d.hasMdblistApiKey
     document.getElementById('sootioUrl').value         = d.sootioUrl         || ''
     renderProviderRows((d.streamProviderUrls || '').split('\n').map(v => v.trim()).filter(Boolean))
     document.getElementById('englishStreamMode').value = d.englishStreamMode || 'prefer'
@@ -523,6 +532,7 @@
     document.getElementById('traktWatchlistShows').checked = d.traktWatchlistShows !== false
     document.getElementById('traktWatchHistory').checked = d.traktWatchHistory === true
     document.getElementById('traktCollections').checked = d.traktCollections === true
+    setSecretPlaceholder('mdblistApiKey', hasStoredMdblistApiKey, 'Enter your MDBList API key')
     document.getElementById('mdblistLists').value = d.mdblistLists || ''
     selectedTraktLists = Array.isArray(d.traktLists) ? d.traktLists : []
     managedUsers = Array.isArray(d.users) ? d.users.map(user => ({ ...user, pendingPassword: '' })) : []
@@ -876,6 +886,7 @@
     const tmdbApiKey = document.getElementById('tmdbApiKey').value
     const tvdbApiKey = document.getElementById('tvdbApiKey').value
     const traktClientSecret = document.getElementById('traktClientSecret').value
+    const mdblistApiKey = document.getElementById('mdblistApiKey').value
     const body = {
       sootioUrl:         document.getElementById('sootioUrl').value,
       streamProviderUrls: collectProviderUrls().join('\n'),
@@ -894,6 +905,7 @@
       ...(tmdbApiKey ? { tmdbApiKey } : {}),
       ...(tvdbApiKey ? { tvdbApiKey } : {}),
       ...(traktClientSecret ? { traktClientSecret } : {}),
+      ...(mdblistApiKey ? { mdblistApiKey } : {}),
     }
     const res = await fetch('/ui/settings-data', {
       method: 'POST',
