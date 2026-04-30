@@ -575,13 +575,13 @@
           metaRight = typePill + seasons
         } else {
           const runtime = item.runtimeMins ? `<span class="pill">${item.runtimeMins}m</span>` : ''
-          const pending = item.pendingLabel ? `<span class="pill amber sm">${item.pendingLabel}</span>` : ''
+          const pending = item.pendingLabel ? `<span class="pill amber">${item.pendingLabel}</span>` : ''
           metaRight = typePill + pending + runtime
         }
       } else if (!isShow) {
         const genres  = (item.genres || []).slice(0, 2).map(g => `<span class="pill">${g}</span>`).join('')
         const runtime = item.runtimeMins ? `<span class="pill">${item.runtimeMins}m</span>` : ''
-        const pending = item.pendingLabel ? `<span class="pill amber sm">${item.pendingLabel}</span>` : ''
+        const pending = item.pendingLabel ? `<span class="pill amber">${item.pendingLabel}</span>` : ''
         metaRight = pending + genres + runtime
       } else {
         const statusColor = item.status === 'Ended' || item.status === 'Canceled' ? '' : 'green'
@@ -595,9 +595,9 @@
         const sourcePills = (item.sourceLabels || [])
           .filter(label => label !== 'Manual')
           .slice(0, 2)
-          .map(label => `<span class="pill sm">${escapeHtml(label)}</span>`)
+          .map(label => `<span class="pill">${escapeHtml(label)}</span>`)
           .join('')
-        metaRight = `${typePill}<span class="pill amber sm">Hidden</span>${sourcePills}`
+        metaRight = `${typePill}<span class="pill amber">Hidden</span>${sourcePills}`
       }
 
       return `<div class="item" onclick="activeDetailTab='overview'; openItemDetail('${type}', ${item.tmdbId})">
