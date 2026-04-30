@@ -859,11 +859,6 @@ async function buildSearchResultItems(
   const wantMovies = !includeTypes || includeTypes.includes('movie')
   const wantShows = !includeTypes || includeTypes.includes('series')
 
-  const [externalMovies, externalShows] = await Promise.all([
-    wantMovies ? searchTmdb(searchTerm).catch(() => []) : Promise.resolve([]),
-    wantShows ? searchTmdbShows(searchTerm).catch(() => []) : Promise.resolve([]),
-  ])
-
   const localMovies = wantMovies
     ? filterMoviesForUser(user, listMovies({ search: searchTerm, sortBy, sortOrder, limit: 10_000, offset: 0, userId: user.id, ...API_LIBRARY_FILTER }))
     : []
@@ -871,24 +866,9 @@ async function buildSearchResultItems(
     ? filterShowsForUser(user, listShows({ search: searchTerm, sortBy, sortOrder, limit: 10_000, offset: 0, userId: user.id, ...API_LIBRARY_FILTER }))
     : []
 
-  const localMovieIds = new Set(localMovies.map(movie => movie.tmdbId))
-  const localShowIds = new Set(localShows.map(show => show.tmdbId))
-
-  const searchOnlyMovies = externalMovies
-    .filter(movie => canUserAccessMovie(user, movie))
-    .filter(movie => !localMovieIds.has(movie.tmdbId) && !hasAnySourceItem('movie', movie.tmdbId))
-    .map(movieToSearchItem)
-
-  const searchOnlyShows = externalShows
-    .filter(show => canUserAccessShow(user, show))
-    .filter(show => !localShowIds.has(show.tmdbId) && !hasAnySourceItem('show', show.tmdbId))
-    .map(showToSearchSeriesItem)
-
   const combined = [
     ...localMovies.map(movie => movieToItem(movie, user.id)),
     ...localShows.map(show => showToSeriesItem(show, user.id)),
-    ...searchOnlyMovies,
-    ...searchOnlyShows,
   ]
 
   return {
