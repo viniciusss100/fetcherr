@@ -265,7 +265,8 @@ async function resolveAndRedirect(
           try {
             const audioLanguages = await probeAudioLanguages(resolved.url)
             app.log.info(`play: ffprobe audio languages for ${resolved.filename}: ${audioLanguages.join(', ') || 'none'}`)
-            const allowsUndetermined = hasOnlyUndeterminedAudio(audioLanguages) && !streamClearlyNonEnglish(stream)
+            const noLanguageInfo = audioLanguages.length === 0
+            const allowsUndetermined = (hasOnlyUndeterminedAudio(audioLanguages) || noLanguageInfo) && !streamClearlyNonEnglish(stream)
             if (config.englishStreamMode === 'require' && !hasEnglishAudio(audioLanguages) && !allowsUndetermined) {
               app.log.info(`play: skipping ${resolved.filename}, no English audio detected`)
               continue
@@ -306,7 +307,7 @@ async function resolveAndRedirect(
     return reply.code(404).send({ error: 'No cached stream available', message: 'No Cached Streams Found' })
   }
   const best = config.englishStreamMode === 'require'
-    ? streams.find(stream => streamClearlyEnglish(stream))
+    ? (streams.find(stream => streamClearlyEnglish(stream)) ?? streams.find(stream => !streamClearlyNonEnglish(stream)))
     : streams[0]
   if (!best?.url) {
     cacheFailedPlay(cacheKey, 'No streams found')
