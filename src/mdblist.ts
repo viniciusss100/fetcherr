@@ -19,6 +19,12 @@ interface MdblistEntry {
   mediaType: MediaType
 }
 
+interface MdblistFetchResult {
+  entries: MdblistEntry[]
+  capped: boolean
+  discoveredTotal?: number
+}
+
 export interface MdblistListSyncResult {
   listUrl: string
   sourceKey: string
@@ -180,12 +186,21 @@ interface MdblistApiItem {
   ids?: { tmdb?: number }
 }
 
-async function fetchApiListEntries(listUrl: string, apiKey: string): Promise<MdblistEntry[]> {
+async function fetchApiListEntries(listUrl: string, apiKey: string, maxEntries: number): Promise<MdblistFetchResult> {
   const path = listPathFromUrl(listUrl)
   const entries: MdblistEntry[] = []
   const seen = new Set<string>()
   const limit = 100
   let offset = 0
+  let capped = false
+
+  const addEntry = (entry: MdblistEntry): void => {
+    const key = `${entry.mediaType}:${entry.tmdbId}`
+    if (seen.has(key) || entries.length >= maxEntries) return
+    seen.add(key)
+    entries.push(entry)
+    if (entries.length >= maxEntries) capped = true
+  }
 
   while (true) {
     const url = `https://api.mdblist.com/lists/${path}/items?limit=${limit}&offset=${offset}&apikey=${encodeURIComponent(apiKey)}`
@@ -209,35 +224,40 @@ async function fetchApiListEntries(listUrl: string, apiKey: string): Promise<Mdb
     for (const item of pageMovies) {
       const tmdbId = item.ids?.tmdb
       if (!tmdbId || !Number.isFinite(tmdbId) || tmdbId <= 0) continue
-      const key = `movie:${tmdbId}`
-      if (!seen.has(key)) { seen.add(key); entries.push({ tmdbId, mediaType: 'movie' }) }
+      addEntry({ tmdbId, mediaType: 'movie' })
     }
     for (const item of pageShows) {
       const tmdbId = item.ids?.tmdb
       if (!tmdbId || !Number.isFinite(tmdbId) || tmdbId <= 0) continue
-      const key = `show:${tmdbId}`
-      if (!seen.has(key)) { seen.add(key); entries.push({ tmdbId, mediaType: 'show' }) }
+      addEntry({ tmdbId, mediaType: 'show' })
     }
 
+    if (entries.length >= maxEntries) break
     if (pageMovies.length + pageShows.length < limit) break
     offset += limit
   }
 
-  return entries
+  return { entries, capped }
 }
 
-async function fetchMdblistEntries(listUrl: string): Promise<MdblistEntry[]> {
+async function fetchMdblistEntries(listUrl: string, maxEntries: number): Promise<MdblistFetchResult> {
   if (config.mdblistApiKey) {
-    const entries = await fetchApiListEntries(listUrl, config.mdblistApiKey)
+    const result = await fetchApiListEntries(listUrl, config.mdblistApiKey, maxEntries)
+    const { entries } = result
     if (!entries.length) throw new Error('MDBList API returned no items for this list')
-    return entries
+    return result
   }
   const html = await fetchPublicListHtml(listUrl)
-  const entries = extractPublicListEntries(html)
-  if (!entries.length) {
+  const allEntries = extractPublicListEntries(html)
+  if (!allEntries.length) {
     throw new Error('No TMDB links found on public MDBList page')
   }
-  return entries
+  const entries = allEntries.slice(0, maxEntries)
+  return {
+    entries,
+    capped: allEntries.length > entries.length,
+    discoveredTotal: allEntries.length,
+  }
 }
 
 export async function syncMdblistList(listUrl: string): Promise<MdblistListSyncResult> {
@@ -250,14 +270,11 @@ export async function syncMdblistList(listUrl: string): Promise<MdblistListSyncR
   }
 
   console.log(`mdblist: syncing ${normalizedUrl}`)
-  const allEntries = await fetchMdblistEntries(normalizedUrl)
   const maxItems = Math.max(1, config.mdblistMaxItems)
-  const entries = allEntries.slice(0, maxItems)
-  if (allEntries.length > entries.length) {
-    console.warn(
-      `mdblist: ${normalizedUrl} has ${allEntries.length} public TMDB links; importing first ${entries.length}. ` +
-      'Set MDBLIST_MAX_ITEMS to adjust this cap.'
-    )
+  const { entries, capped, discoveredTotal } = await fetchMdblistEntries(normalizedUrl, maxItems)
+  if (capped) {
+    const totalLabel = discoveredTotal ? `${discoveredTotal} public TMDB links` : `at least ${entries.length} API items`
+    console.warn(`mdblist: ${normalizedUrl} has ${totalLabel}; importing first ${entries.length}. Set MDBLIST_MAX_ITEMS to adjust this cap.`)
   } else {
     console.log(`mdblist: ${normalizedUrl} has ${entries.length} public TMDB links`)
   }

@@ -240,7 +240,7 @@
     <div class="field">
       <label for="mdblistApiKey">API Key <span class="optional-tag">Optional</span> <span id="mdblistConfigState" class="config-state" hidden></span></label>
       <div class="input-row">
-        <input id="mdblistApiKey" type="password" placeholder="Enter your MDBList API key">
+        <input id="mdblistApiKey" type="password" placeholder="Enter your MDBList API key" oninput="setMdblistStoredStatus()">
       </div>
       <div class="field-note">Required for lists with more than 48 items. Get your free key at <a href="https://mdblist.com/preferences/" target="_blank" rel="noreferrer">mdblist.com/preferences</a>.</div>
     </div>
@@ -508,6 +508,23 @@
     setApiStoredStatus(service)
   }
 
+  function setMdblistStoredStatus() {
+    const input = document.getElementById('mdblistApiKey')
+    const badge = document.getElementById('mdblistConfigState')
+    const hasNewValue = input.value.trim().length > 0
+    badge.hidden = !hasNewValue && !hasStoredMdblistApiKey
+    if (hasNewValue) {
+      badge.className = 'config-state pending'
+      badge.textContent = 'Unsaved'
+    } else if (hasStoredMdblistApiKey) {
+      badge.className = 'config-state ok'
+      badge.textContent = 'Connected'
+    } else {
+      badge.className = 'config-state'
+      badge.textContent = ''
+    }
+  }
+
   async function loadSettings() {
     const res = await fetch('/ui/settings-data')
     if (!res.ok) return
@@ -542,6 +559,7 @@
     setApiStoredStatus('rd')
     setApiStoredStatus('tmdb')
     setApiStoredStatus('tvdb')
+    setMdblistStoredStatus()
   }
 
   function roleOptions(selected) {
