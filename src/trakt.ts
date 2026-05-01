@@ -179,11 +179,6 @@ export async function getValidToken(): Promise<string | null> {
   return token.accessToken
 }
 
-export function hasToken(): boolean {
-  const token = loadToken()
-  return !!token && token.expiresAt > new Date()
-}
-
 export function tokenStatus(): { authenticated: boolean; expiresAt?: string } {
   const token = loadToken()
   if (!token) return { authenticated: false }

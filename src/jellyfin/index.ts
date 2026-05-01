@@ -9,8 +9,8 @@ import {
   authEnabled, canUserAccessMovie, canUserAccessShow, getDb, getUserById, getUserByUsername, verifyUserCredentials, DEFAULT_ADMIN_USER_ID, isLibraryItemHidden, listSourceItems, type AppUser,
 } from '../db.js'
 import {
-  searchTmdb, fetchMovieByTmdbId, posterUrl,
-  fetchShowByTmdbId, searchTmdbShows,
+  fetchMovieByTmdbId, posterUrl,
+  fetchShowByTmdbId,
   fetchAndCacheSeasonDetails, ensureShowSeasonsCached,
 } from '../tmdb.js'
 import type { Movie, Show, Season, Episode } from '../db.js'
@@ -1975,8 +1975,11 @@ export async function jellyfinRoutes(app: FastifyInstance) {
   app.get('/Items/:id/PlaybackInfo',  async (req, reply) => handlePlaybackInfo(req as never, reply as never))
   app.post('/Items/:id/PlaybackInfo', async (req, reply) => handlePlaybackInfo(req as never, reply as never))
 
-  // Video stream redirect (fallback for some Infuse versions)
+  // Video stream redirect (fallback for some Infuse/VidHub versions)
   app.get('/Videos/:id/stream', async (req, reply) => {
+    const user = requestUser(req.headers)
+    if (!user) return reply.code(401).send({ error: 'Unauthorized' })
+
     const { id } = req.params as { id: string }
     const origin = buildPlaybackOrigin(req.headers as Record<string, string | undefined>)
 
@@ -1985,12 +1988,14 @@ export async function jellyfinRoutes(app: FastifyInstance) {
       if (isLibraryItemHidden('show', epRef.showTmdbId)) return reply.code(404).send()
       const show = getShowByTmdbId(epRef.showTmdbId) ?? await fetchShowByTmdbId(epRef.showTmdbId)
       if (!show?.imdbId) return reply.code(404).send()
+      if (!canUserAccessShow(user, show)) return reply.code(404).send()
       return reply.redirect(createSignedPlaybackUrl(origin, `/play/${show.imdbId}/${epRef.seasonNum}/${epRef.episodeNum}`), 302)
     }
 
     const tmdbId = idToTmdb(id)
     const movie = tmdbId ? (getMovieByTmdbId(tmdbId) ?? await fetchMovieByTmdbId(tmdbId)) : null
     if (!movie?.imdbId) return reply.code(404).send()
+    if (!canUserAccessMovie(user, movie)) return reply.code(404).send()
     if (!isMovieVisibleToLibrary(movie)) return reply.code(409).send({ error: 'Title not yet available', message: 'Not Yet Released' })
     return reply.redirect(createSignedPlaybackUrl(origin, `/play/${movie.imdbId}`), 302)
   })

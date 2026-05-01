@@ -2,8 +2,6 @@ import Fastify from 'fastify'
 import { config, normalizeSootioUrl, parseBooleanSetting, parseEnglishStreamMode, parseMdblistLists, parseMovieReleaseMode, parseShowAddDefaultMode, parseStreamProviderUrls, parseTraktLists } from './config.js'
 import { getDb, getAllSettings } from './db.js'
 import { jellyfinRoutes, resolveJellyfinUser } from './jellyfin/index.js'
-import { castRoutes } from './cast/routes.js'
-import { initCastSchema } from './cast/db.js'
 import { uiRoutes } from './ui/routes.js'
 import { wrapFastifyLogger } from './logger.js'
 import { markSyncComplete } from './sync-state.js'
@@ -26,7 +24,6 @@ const app = Fastify({
 
 // Initialise DB
 getDb()
-initCastSchema()
 
 // Apply any DB-persisted settings on top of env vars
 {
@@ -57,7 +54,6 @@ wrapFastifyLogger(app)
 // Register routes
 await app.register(jellyfinRoutes)
 await app.register(jellyfinRoutes, { prefix: '/emby' })
-await app.register(castRoutes)
 await app.register(uiRoutes)
 
 // Healthcheck

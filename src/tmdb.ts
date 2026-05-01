@@ -182,45 +182,6 @@ function raw2movie(r: TmdbMovieRaw, imdbId = '', listedAt = ''): Omit<Movie, 'id
   }
 }
 
-async function fetchImdbId(tmdbId: number): Promise<string> {
-  try {
-    const d = await tmdbGet(`/movie/${tmdbId}/external_ids`) as { imdb_id?: string }
-    return d.imdb_id ?? ''
-  } catch {
-    return ''
-  }
-}
-
-export async function seedPopular(): Promise<void> {
-  if (!config.tmdbApiKey) return
-  console.log('tmdb: seeding popular movies')
-  let total = 0
-  for (let page = 1; page <= 10; page++) {
-    const d = await tmdbGet(`/movie/popular?language=en-US&page=${page}`) as { results: TmdbMovieRaw[] }
-    if (!d.results?.length) break
-    for (const r of d.results) {
-      const imdbId = await fetchImdbId(r.id)
-      upsertMovie(raw2movie(r, imdbId))
-      total++
-    }
-    console.log(`tmdb: seeded page ${page} (${total} total)`)
-  }
-  console.log(`tmdb: seed complete — ${total} movies`)
-}
-
-export async function searchTmdb(query: string): Promise<Movie[]> {
-  if (!config.tmdbApiKey) return []
-  const d = await tmdbGet(
-    `/search/movie?query=${encodeURIComponent(query)}&include_adult=false&language=en-US`
-  ) as { results: TmdbMovieRaw[] }
-  const out = await Promise.all((d.results ?? []).map(async (r) => {
-    const imdbId = await fetchImdbId(r.id)
-    const m = raw2movie(r, imdbId)
-    return { id: 0, ...m }
-  }))
-  return out
-}
-
 /**
  * Re-fetch movie metadata from TMDB to fill in any missing fields (e.g. backdrop_path).
  * Only hits TMDB if the movie is missing a backdrop.
@@ -381,23 +342,6 @@ export async function fetchShowByTmdbId(tmdbId: number, listedAt = ''): Promise<
   } catch {
     return null
   }
-}
-
-export async function searchTmdbShows(query: string): Promise<Show[]> {
-  if (!config.tmdbApiKey) return []
-  const d = await tmdbGet(
-    `/search/tv?query=${encodeURIComponent(query)}&include_adult=false&language=en-US`
-  ) as { results: TmdbShowRaw[] }
-  const out = await Promise.all((d.results ?? []).map(async (r) => {
-    const full = await tmdbGet(`/tv/${r.id}?append_to_response=external_ids,images,content_ratings,keywords&include_image_language=en,null`)
-      .then(result => result as Partial<TmdbShowRaw> & { external_ids?: { imdb_id?: string; tvdb_id?: number }; images?: TmdbImagesResponse })
-      .catch(() => ({} as Partial<TmdbShowRaw> & { external_ids?: { imdb_id?: string; tvdb_id?: number }; images?: TmdbImagesResponse }))
-    const imdbId = full.external_ids?.imdb_id ?? ''
-    const tvdbId = full.external_ids?.tvdb_id ?? 0
-    const s = raw2show({ ...r, ...full, images: full.images } as TmdbShowRaw & { images?: TmdbImagesResponse }, imdbId, tvdbId)
-    return { id: 0, ...s }
-  }))
-  return out
 }
 
 /**

@@ -507,6 +507,20 @@ export function getMovieReleaseModeForLibrary(movieTmdbId: number): 'digital' | 
   return row?.mode === 'theatrical' ? 'theatrical' : row?.mode === 'digital' ? 'digital' : config.movieReleaseMode
 }
 
+export function listMovieReleaseModePreferences(movieTmdbIds: number[]): Map<number, 'digital' | 'theatrical'> {
+  const ids = uniqTmdbIds(movieTmdbIds)
+  if (!ids.length) return new Map()
+  const rows = getDb().prepare(`
+    SELECT movie_tmdb_id, mode
+    FROM movie_release_preferences
+    WHERE movie_tmdb_id IN (${sqlPlaceholders(ids.length)})
+  `).all(...ids) as Array<{ movie_tmdb_id: number; mode: string }>
+  return new Map(rows.map(row => [
+    row.movie_tmdb_id,
+    row.mode === 'theatrical' ? 'theatrical' : 'digital',
+  ]))
+}
+
 export function setMovieReleaseModePreference(movieTmdbId: number, mode: 'digital' | 'theatrical'): void {
   getDb().prepare(`
     INSERT INTO movie_release_preferences (movie_tmdb_id, mode, updated_at)
@@ -548,6 +562,18 @@ export function getManualMovieAvailabilityOverride(tmdbId: number): boolean {
     WHERE movie_tmdb_id = ?
   `).get(tmdbId) as { ignore_release_gate: number } | undefined
   return !!row?.ignore_release_gate
+}
+
+export function listManualMovieAvailabilityOverrides(movieTmdbIds: number[]): Set<number> {
+  const ids = uniqTmdbIds(movieTmdbIds)
+  if (!ids.length) return new Set()
+  const rows = getDb().prepare(`
+    SELECT movie_tmdb_id
+    FROM manual_movie_availability_overrides
+    WHERE ignore_release_gate = 1
+      AND movie_tmdb_id IN (${sqlPlaceholders(ids.length)})
+  `).all(...ids) as Array<{ movie_tmdb_id: number }>
+  return new Set(rows.map(row => row.movie_tmdb_id))
 }
 
 export function setManualMovieAvailabilityOverride(tmdbId: number, ignoreReleaseGate: boolean): void {
@@ -1305,6 +1331,20 @@ export function getEffectiveShowMode(showTmdbId: number): {
   }
 }
 
+export function listManualShowSubscriptionsById(showTmdbIds: number[]): Map<number, ManualShowSubscription> {
+  const ids = uniqTmdbIds(showTmdbIds)
+  if (!ids.length) return new Map()
+  const rows = getDb().prepare(`
+    SELECT *
+    FROM manual_show_subscriptions
+    WHERE show_tmdb_id IN (${sqlPlaceholders(ids.length)})
+  `).all(...ids) as Record<string, unknown>[]
+  return new Map(rows.map(row => {
+    const sub = row2manualShowSubscription(row)
+    return [sub.showTmdbId, sub]
+  }))
+}
+
 function uniqTmdbIds(tmdbIds: number[]): number[] {
   return [...new Set(tmdbIds)].sort((a, b) => a - b)
 }
@@ -1424,6 +1464,39 @@ export function listSourceKeysForItem(mediaType: MediaType, tmdbId: number): str
     ORDER BY source_key ASC
   `).all(mediaType, tmdbId) as { source_key: string }[]
   return rows.map(row => row.source_key)
+}
+
+export function listSourceKeysForItems(mediaType: MediaType, tmdbIds: number[]): Map<number, string[]> {
+  const ids = uniqTmdbIds(tmdbIds)
+  if (!ids.length) return new Map()
+  const rows = getDb().prepare(`
+    SELECT tmdb_id, source_key
+    FROM source_items
+    WHERE media_type = ?
+      AND tmdb_id IN (${sqlPlaceholders(ids.length)})
+    ORDER BY tmdb_id ASC, source_key ASC
+  `).all(mediaType, ...ids) as Array<{ tmdb_id: number; source_key: string }>
+  const out = new Map<number, string[]>()
+  for (const row of rows) {
+    const sourceKeys = out.get(row.tmdb_id) ?? []
+    sourceKeys.push(row.source_key)
+    out.set(row.tmdb_id, sourceKeys)
+  }
+  return out
+}
+
+export function listAiredShowTmdbIds(showTmdbIds: number[]): Set<number> {
+  const ids = uniqTmdbIds(showTmdbIds)
+  if (!ids.length) return new Set()
+  const today = new Date().toISOString().slice(0, 10)
+  const rows = getDb().prepare(`
+    SELECT DISTINCT show_tmdb_id
+    FROM episodes
+    WHERE show_tmdb_id IN (${sqlPlaceholders(ids.length)})
+      AND air_date != ''
+      AND air_date <= ?
+  `).all(...ids, today) as Array<{ show_tmdb_id: number }>
+  return new Set(rows.map(row => row.show_tmdb_id))
 }
 
 export function removeSourceKey(sourceKey: string, mediaType: MediaType): number[] {
