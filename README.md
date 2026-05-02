@@ -99,11 +99,12 @@ kubectl apply -f deploy/kubernetes/fetcherr.yaml
 
 ## Environment
 
+Most runtime configuration should be entered in the web UI and is stored in Fetcherr's database. `.env` is intentionally minimal and is mainly used for startup values.
+
 | Variable | Required | Description |
 | --- | --- | --- |
 | `SERVER_URL` | Yes | External base URL used for playback redirects |
-| `MDBLIST_LISTS` | No | Optional comma- or newline-separated public MDBList URLs. Can also be configured in Settings. |
-| `MDBLIST_MAX_ITEMS` | No | Maximum public MDBList items to import per list. Defaults to `1000`. |
+| `MDBLIST_MAX_ITEMS` | No | Advanced fallback: maximum MDBList items to import per list. Defaults to `1000`. |
 
 ## Tips
 
@@ -117,7 +118,7 @@ kubectl apply -f deploy/kubernetes/fetcherr.yaml
 > `ENGLISH_STREAM_MODE=require` is the strictest option for English audio. It allows explicit English metadata or ffprobe-confirmed English audio on probeable files.
 
 > [!NOTE]
-> Most runtime configuration now lives in the web UI and is stored in Fetcherr's database. `.env` is intentionally minimal and mainly used to define the external server URL.
+> Most runtime configuration now lives in the web UI and is stored in Fetcherr's database. `.env` is intentionally minimal.
 
 > [!WARNING]
 > Real-Debrid multi-location and IP restrictions still apply.
