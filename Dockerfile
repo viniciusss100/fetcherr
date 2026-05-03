@@ -27,11 +27,13 @@ ENV FETCHERR_VERSION=$FETCHERR_VERSION \
     FETCHERR_IMAGE_TAG=$FETCHERR_IMAGE_TAG \
     FETCHERR_BUILD_DATE=$FETCHERR_BUILD_DATE
 
-COPY package*.json ./
-COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/dist ./dist
+COPY --chown=node:node package*.json ./
+COPY --chown=node:node --from=build /app/node_modules ./node_modules
+COPY --chown=node:node --from=build /app/dist ./dist
 
-RUN mkdir -p /app/data
+RUN mkdir -p /app/data && chown -R node:node /app
+
+USER node
 
 EXPOSE 9990
 

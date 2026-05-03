@@ -22,6 +22,26 @@ const app = Fastify({
   rewriteUrl: (req) => req.url!.replace(/\/\/+/g, '/'),
 })
 
+app.addHook('onRequest', async (_req, reply) => {
+  reply.header('X-Content-Type-Options', 'nosniff')
+  reply.header('X-Frame-Options', 'DENY')
+  reply.header('Referrer-Policy', 'same-origin')
+  reply.header('Permissions-Policy', 'camera=(), microphone=(), geolocation=()')
+  reply.header(
+    'Content-Security-Policy',
+    [
+      "default-src 'self'",
+      "base-uri 'self'",
+      "connect-src 'self'",
+      "form-action 'self'",
+      "frame-ancestors 'none'",
+      "img-src 'self' data: https://image.tmdb.org",
+      "script-src 'self' 'unsafe-inline'",
+      "style-src 'self' 'unsafe-inline'",
+    ].join('; '),
+  )
+})
+
 // Initialise DB
 getDb()
 
