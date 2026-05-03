@@ -51,11 +51,6 @@ getDb()
 // Wrap Fastify logger so UI log viewer captures it
 wrapFastifyLogger(app)
 
-// Register routes
-await app.register(jellyfinRoutes)
-await app.register(jellyfinRoutes, { prefix: '/emby' })
-await app.register(uiRoutes)
-
 // Healthcheck
 app.get('/healthz', async () => ({ status: 'ok' }))
 
@@ -106,9 +101,23 @@ function requestPlaybackUser(headers: Record<string, string | string[] | undefin
 function pad2(n: number) { return n.toString().padStart(2, '0') }
 
 const FAILED_PLAY_TTL_MS = 3 * 60 * 1000
+const PLAYBACK_PREWARM_TTL_MS = 5 * 60 * 1000
 const MAX_RD_TRANSIENT_FAILURES = 3
 type FailedPlayCacheEntry = { expiresAt: number; reason: string }
 const failedPlayCache = new Map<string, FailedPlayCacheEntry>()
+type PlayResolution = { url: string; filename?: string; sourceHash?: string }
+type PlaybackPrewarmEntry = { expiresAt: number; promise: Promise<PlayResolution> }
+const playbackPrewarmCache = new Map<string, PlaybackPrewarmEntry>()
+
+class PlaybackResolutionError extends Error {
+  constructor(
+    message: string,
+    readonly statusCode: number,
+    readonly response: { error: string; message: string },
+  ) {
+    super(message)
+  }
+}
 
 function getFailedPlayReason(cacheKey: string): string | null {
   const entry = failedPlayCache.get(cacheKey)
@@ -129,6 +138,52 @@ function cacheFailedPlay(cacheKey: string, reason: string) {
 
 function clearFailedPlay(cacheKey: string) {
   failedPlayCache.delete(cacheKey)
+}
+
+function cleanupPlaybackPrewarmCache() {
+  const now = Date.now()
+  for (const [key, entry] of playbackPrewarmCache) {
+    if (entry.expiresAt <= now) playbackPrewarmCache.delete(key)
+  }
+}
+
+function getOrCreatePlaybackResolution(
+  cacheKey: string,
+  label: string,
+  resolver: () => Promise<PlayResolution>,
+): { promise: Promise<PlayResolution>; reused: boolean } {
+  cleanupPlaybackPrewarmCache()
+  const existing = playbackPrewarmCache.get(cacheKey)
+  if (existing && existing.expiresAt > Date.now()) {
+    return { promise: existing.promise, reused: true }
+  }
+
+  const promise = resolver().catch(err => {
+    const current = playbackPrewarmCache.get(cacheKey)
+    if (current?.promise === promise) playbackPrewarmCache.delete(cacheKey)
+    throw err
+  })
+  playbackPrewarmCache.set(cacheKey, {
+    expiresAt: Date.now() + PLAYBACK_PREWARM_TTL_MS,
+    promise,
+  })
+  app.log.info(`play: started resolver for ${label}`)
+  return { promise, reused: false }
+}
+
+function prewarmPlayback(playPath: string, label: string) {
+  if (getFailedPlayReason(playPath)) return
+  const resolver = playbackResolverForPath(playPath)
+  if (!resolver) return
+  const { promise, reused } = getOrCreatePlaybackResolution(playPath, label, resolver)
+  if (reused) {
+    app.log.info(`play: prewarm already active for ${label}`)
+    return
+  }
+  app.log.info(`play: prewarming ${label}`)
+  void promise
+    .then(result => app.log.info(`play: prewarm ready for ${label}${result.filename ? ` → ${result.filename}` : ''}`))
+    .catch(err => app.log.info(`play: prewarm ended for ${label}: ${err}`))
 }
 
 function isNonRetryableRdError(err: ProviderUnavailableError): boolean {
@@ -214,13 +269,12 @@ function hasOnlyUndeterminedAudio(languages: string[]): boolean {
   return normalized.length > 0 && normalized.every(lang => lang === 'und' || lang === 'undetermined' || lang === 'zxx')
 }
 
-async function resolveAndRedirect(
+async function resolvePlayableStream(
   streams: Awaited<ReturnType<typeof fetchRankedStreams>>,
   label: string,
   cacheKey: string,
-  reply: { redirect: (url: string, code: number) => unknown; code: (n: number) => { send: (v: unknown) => unknown } },
   fileHint?: string,
-) {
+): Promise<PlayResolution> {
   if (config.rdApiKey) {
     let rdTransientFailures = 0
     app.log.info(`play: trying ${streams.length} ranked candidate${streams.length === 1 ? '' : 's'} for ${label}`)
@@ -274,7 +328,7 @@ async function resolveAndRedirect(
         }
         app.log.info(`play: RD resolved ${resolved.filename} from hash ${hash.slice(0, 8)}…`)
         clearFailedPlay(cacheKey)
-        return reply.redirect(resolved.url, 302)
+        return { url: resolved.url, filename: resolved.filename, sourceHash: hash }
       } catch (err) {
         if (err instanceof NotCachedError) {
           app.log.info(`play: hash ${hashLabel}… not cached, trying next`)
@@ -294,25 +348,82 @@ async function resolveAndRedirect(
             `play: RD unavailable for ${label} after ${rdTransientFailures} failure${rdTransientFailures === 1 ? '' : 's'}: ${err}; ` +
             'not caching playback miss'
           )
-          return reply.code(503).send({ error: 'Real-Debrid unavailable', message: 'Real-Debrid Unavailable' })
+          throw new PlaybackResolutionError(
+            'Real-Debrid unavailable',
+            503,
+            { error: 'Real-Debrid unavailable', message: 'Real-Debrid Unavailable' },
+          )
         }
         app.log.warn(`play: hash ${hashLabel}… failed: ${err}; trying next`)
       }
     }
     app.log.warn(`play: no usable RD-cached stream found for ${label}`)
     cacheFailedPlay(cacheKey, 'No cached stream available')
-    return reply.code(404).send({ error: 'No cached stream available', message: 'No Cached Streams Found' })
+    throw new PlaybackResolutionError(
+      'No cached stream available',
+      404,
+      { error: 'No cached stream available', message: 'No Cached Streams Found' },
+    )
   }
   const best = config.englishStreamMode === 'require'
     ? (streams.find(stream => streamClearlyEnglish(stream)) ?? streams.find(stream => !streamClearlyNonEnglish(stream)))
     : streams[0]
   if (!best?.url) {
     cacheFailedPlay(cacheKey, 'No streams found')
-    return reply.code(404).send({ error: 'No usable stream available', message: 'No Streams Found' })
+    throw new PlaybackResolutionError(
+      'No usable stream available',
+      404,
+      { error: 'No usable stream available', message: 'No Streams Found' },
+    )
   }
   app.log.info(`play: fallback direct stream selected for ${label}`)
   clearFailedPlay(cacheKey)
-  return reply.redirect(best.url, 302)
+  return { url: best.url }
+}
+
+async function resolveMoviePlayback(imdbId: string): Promise<PlayResolution> {
+  const playPath = `/play/${imdbId}`
+  const streams = await fetchRankedStreams(imdbId)
+  return resolvePlayableStream(streams, imdbId, playPath)
+}
+
+async function resolveEpisodePlayback(imdbId: string, season: number, episodeNumber: number): Promise<PlayResolution> {
+  const playPath = `/play/${imdbId}/${season}/${episodeNumber}`
+  const show = getShowByImdbId(imdbId)
+  const episode = show
+    ? getEpisodesForSeason(show.tmdbId, season).find(ep => ep.episodeNumber === episodeNumber)
+    : null
+  const episodeAirYear = episode?.airDate ? Number.parseInt(episode.airDate.slice(0, 4), 10) : undefined
+  const streams = await fetchRankedEpisodeStreams(
+    imdbId,
+    season,
+    episodeNumber,
+    show?.year || undefined,
+    Number.isFinite(episodeAirYear) ? episodeAirYear : undefined,
+  )
+  return resolvePlayableStream(
+    streams,
+    `${imdbId} S${season}E${episodeNumber}`,
+    playPath,
+    `s${pad2(season)}e${pad2(episodeNumber)}`,
+  )
+}
+
+function playbackResolverForPath(playPath: string): (() => Promise<PlayResolution>) | null {
+  const movieMatch = playPath.match(/^\/play\/([^/]+)$/)
+  if (movieMatch) return () => resolveMoviePlayback(movieMatch[1])
+
+  const episodeMatch = playPath.match(/^\/play\/([^/]+)\/(\d+)\/(\d+)$/)
+  if (episodeMatch) {
+    const imdbId = episodeMatch[1]
+    const season = Number.parseInt(episodeMatch[2], 10)
+    const episode = Number.parseInt(episodeMatch[3], 10)
+    if (Number.isFinite(season) && Number.isFinite(episode)) {
+      return () => resolveEpisodePlayback(imdbId, season, episode)
+    }
+  }
+
+  return null
 }
 
 app.get('/play/:imdbId', async (req, reply) => {
@@ -334,9 +445,14 @@ app.get('/play/:imdbId', async (req, reply) => {
   }
   app.log.info(`play: resolving stream for ${imdbId}`)
   try {
-    const streams = await fetchRankedStreams(imdbId)
-    return resolveAndRedirect(streams, imdbId, playPath, reply as never)
+    const { promise, reused } = getOrCreatePlaybackResolution(playPath, imdbId, () => resolveMoviePlayback(imdbId))
+    if (reused) app.log.info(`play: using prewarmed resolver for ${imdbId}`)
+    const resolved = await promise
+    return reply.redirect(resolved.url, 302)
   } catch (err) {
+    if (err instanceof PlaybackResolutionError) {
+      return reply.code(err.statusCode).send(err.response)
+    }
     app.log.warn(`play: no stream for ${imdbId}: ${err}`)
     cacheFailedPlay(playPath, 'No streams found')
     return reply.code(404).send({ error: 'No stream available', message: 'No Streams Found' })
@@ -365,25 +481,25 @@ app.get('/play/:imdbId/:season/:episode', async (req, reply) => {
   const e = parseInt(episode)
   app.log.info(`play: resolving episode stream for ${imdbId} S${s}E${e}`)
   try {
-    const show = getShowByImdbId(imdbId)
-    const episode = show
-      ? getEpisodesForSeason(show.tmdbId, s).find(ep => ep.episodeNumber === e)
-      : null
-    const episodeAirYear = episode?.airDate ? Number.parseInt(episode.airDate.slice(0, 4), 10) : undefined
-    const streams = await fetchRankedEpisodeStreams(
-      imdbId,
-      s,
-      e,
-      show?.year || undefined,
-      Number.isFinite(episodeAirYear) ? episodeAirYear : undefined,
-    )
-    return resolveAndRedirect(streams, `${imdbId} S${s}E${e}`, playPath, reply as never, `s${pad2(s)}e${pad2(e)}`)
+    const label = `${imdbId} S${s}E${e}`
+    const { promise, reused } = getOrCreatePlaybackResolution(playPath, label, () => resolveEpisodePlayback(imdbId, s, e))
+    if (reused) app.log.info(`play: using prewarmed resolver for ${label}`)
+    const resolved = await promise
+    return reply.redirect(resolved.url, 302)
   } catch (err) {
+    if (err instanceof PlaybackResolutionError) {
+      return reply.code(err.statusCode).send(err.response)
+    }
     app.log.warn(`play: no stream for ${imdbId} S${s}E${e}: ${err}`)
     cacheFailedPlay(playPath, 'No streams found')
     return reply.code(404).send({ error: 'No stream available', message: 'No Streams Found' })
   }
 })
+
+// Register routes after playback helpers are initialized so Jellyfin can prewarm them.
+await app.register(jellyfinRoutes, { prewarmPlayback })
+await app.register(jellyfinRoutes, { prefix: '/emby', prewarmPlayback })
+await app.register(uiRoutes)
 
 // ── Trakt auth ────────────────────────────────────────────────────────────────
 

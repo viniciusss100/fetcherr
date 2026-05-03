@@ -1092,7 +1092,11 @@ function jellyfinUser(user: AppUser) {
 
 // ── Route registration ────────────────────────────────────────────────────────
 
-export async function jellyfinRoutes(app: FastifyInstance) {
+type JellyfinRouteOptions = {
+  prewarmPlayback?: (playPath: string, label: string) => void
+}
+
+export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOptions = {}) {
 
   function requireJellyfinUser(
     headers: Record<string, string | string[] | undefined>,
@@ -1911,6 +1915,7 @@ export async function jellyfinRoutes(app: FastifyInstance) {
       const playUrl = createSignedPlaybackUrl(buildPlaybackOrigin(req.headers), playPath)
       const label = ep ? ep.name : `S${epRef.seasonNum}E${epRef.episodeNum}`
       app.log.info(`playback: "${show.title}" ${label} → ${playUrl}`)
+      opts.prewarmPlayback?.(playPath, `${show.title} ${label}`)
       return {
         MediaSources: [{
           Id:                   id,
@@ -1948,6 +1953,7 @@ export async function jellyfinRoutes(app: FastifyInstance) {
     const playPath = `/play/${movie.imdbId}`
     const playUrl = createSignedPlaybackUrl(buildPlaybackOrigin(req.headers), playPath)
     app.log.info(`playback: "${movie.title}" → ${playUrl}`)
+    opts.prewarmPlayback?.(playPath, movie.title)
     return {
       MediaSources: [{
         Id:                   id,
@@ -1989,7 +1995,9 @@ export async function jellyfinRoutes(app: FastifyInstance) {
       const show = getShowByTmdbId(epRef.showTmdbId) ?? await fetchShowByTmdbId(epRef.showTmdbId)
       if (!show?.imdbId) return reply.code(404).send()
       if (!canUserAccessShow(user, show)) return reply.code(404).send()
-      return reply.redirect(createSignedPlaybackUrl(origin, `/play/${show.imdbId}/${epRef.seasonNum}/${epRef.episodeNum}`), 302)
+      const playPath = `/play/${show.imdbId}/${epRef.seasonNum}/${epRef.episodeNum}`
+      opts.prewarmPlayback?.(playPath, `${show.title} S${epRef.seasonNum}E${epRef.episodeNum}`)
+      return reply.redirect(createSignedPlaybackUrl(origin, playPath), 302)
     }
 
     const tmdbId = idToTmdb(id)
@@ -1997,6 +2005,8 @@ export async function jellyfinRoutes(app: FastifyInstance) {
     if (!movie?.imdbId) return reply.code(404).send()
     if (!canUserAccessMovie(user, movie)) return reply.code(404).send()
     if (!isMovieVisibleToLibrary(movie)) return reply.code(409).send({ error: 'Title not yet available', message: 'Not Yet Released' })
-    return reply.redirect(createSignedPlaybackUrl(origin, `/play/${movie.imdbId}`), 302)
+    const playPath = `/play/${movie.imdbId}`
+    opts.prewarmPlayback?.(playPath, movie.title)
+    return reply.redirect(createSignedPlaybackUrl(origin, playPath), 302)
   })
 }
