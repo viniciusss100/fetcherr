@@ -39,6 +39,7 @@ const API_LIBRARY_FILTER = { availableOnly: true as const }
 const READ_CACHE_TTL_MS = 3_000
 const IMAGE_PROXY_TTL_MS = 60 * 60 * 1000
 const PLAYED_COMPLETION_THRESHOLD = 0.95
+const NEXT_UP_PROGRESS_THRESHOLD = 0.60
 const JELLYFIN_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000
 const LOGIN_WINDOW_MS = 15 * 60 * 1000
 const LOGIN_MAX_ATTEMPTS = 10
@@ -878,22 +879,33 @@ async function buildSearchResultItems(
   }
 }
 
-function findNextUpEpisode(show: Show, playedIds: Set<string>, resumeIds: Set<string>): Episode | null {
+function episodeRuntimeTicks(ep: Episode): number {
+  return (ep.runtimeMins || 45) * 60 * 10_000_000
+}
+
+function meetsNextUpProgressThreshold(show: Show, ep: Episode, userId: string): boolean {
+  const episodeId = episodeToId(show.tmdbId, ep.seasonNumber, ep.episodeNumber)
+  const ud = getUserData(episodeId, userId)
+  return !ud.played && ud.positionTicks > 0 && (ud.positionTicks / episodeRuntimeTicks(ep)) >= NEXT_UP_PROGRESS_THRESHOLD
+}
+
+function findNextUpEpisode(show: Show, playedIds: Set<string>, resumeIds: Set<string>, userId: string): Episode | null {
   const candidateEpisodes = visibleAiredEpisodesForShow(show)
   if (!candidateEpisodes.length) return null
 
-  let highestPlayed: Episode | null = null
+  let anchorEpisode: Episode | null = null
   for (const ep of allAiredEpisodesForShow(show)) {
-    if (!playedIds.has(episodeToId(show.tmdbId, ep.seasonNumber, ep.episodeNumber))) continue
-    if (!highestPlayed || compareEpisodeOrder(ep, highestPlayed) > 0) {
-      highestPlayed = ep
+    const episodeId = episodeToId(show.tmdbId, ep.seasonNumber, ep.episodeNumber)
+    if (!playedIds.has(episodeId) && !meetsNextUpProgressThreshold(show, ep, userId)) continue
+    if (!anchorEpisode || compareEpisodeOrder(ep, anchorEpisode) > 0) {
+      anchorEpisode = ep
     }
   }
 
-  if (!highestPlayed) return null
+  if (!anchorEpisode) return null
 
   for (const ep of candidateEpisodes) {
-    if (compareEpisodeOrder(ep, highestPlayed) <= 0) continue
+    if (compareEpisodeOrder(ep, anchorEpisode) <= 0) continue
     const episodeId = episodeToId(show.tmdbId, ep.seasonNumber, ep.episodeNumber)
     if (resumeIds.has(episodeId)) continue
     if (!playedIds.has(episodeId)) return ep
@@ -1472,7 +1484,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
       const resumeIds = new Set(listResumeItemIds(10_000, 0, user.id))
       return filterShowsForUser(user, listShows({ limit: 100_000, userId: user.id, ...API_LIBRARY_FILTER }))
         .map(show => {
-          const ep = findNextUpEpisode(show, playedIds, resumeIds)
+          const ep = findNextUpEpisode(show, playedIds, resumeIds, user.id)
           return ep ? { show, ep } : null
         })
         .filter((value): value is { show: Show; ep: Episode } => value !== null)
