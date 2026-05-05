@@ -55,19 +55,27 @@
   </div>
 
   <div class="stats">
-    <div class="stat movies filterable" id="statCardMovies" onclick="switchTab('movies')">
+    <div class="stat movies filterable" id="statCardMovies" role="button" tabindex="0" aria-pressed="false" onclick="switchTab('movies')" onkeydown="onStatCardKey(event, 'movies')">
       <div class="stat-value" id="statMovies">—</div>
       <div class="stat-label">Movies</div>
     </div>
-    <div class="stat shows filterable" id="statCardShows" onclick="switchTab('shows')">
+    <div class="stat shows filterable" id="statCardShows" role="button" tabindex="0" aria-pressed="false" onclick="switchTab('shows')" onkeydown="onStatCardKey(event, 'shows')">
       <div class="stat-value" id="statShows">—</div>
       <div class="stat-label">TV Shows</div>
     </div>
   </div>
 
   <div class="sync-bar">
-    <span>Last sync: <strong id="lastSync">—</strong></span>
-    <span>Next sync: <strong id="nextSync">—</strong></span>
+    <span class="sync-bar-icon" aria-hidden="true">
+      <svg width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 4v5h5"/>
+        <path d="M20 20v-5h-5"/>
+        <path d="M5 15a7 7 0 0 0 11.9 3.9L20 15"/>
+        <path d="M19 9A7 7 0 0 0 7.1 5.1L4 9"/>
+      </svg>
+    </span>
+    <span>Last sync <strong id="lastSync">—</strong></span>
+    <span>Next sync <strong id="nextSync">—</strong></span>
   </div>
 
   <div id="syncMsg" class="sync-msg">Sync started — library will update in a moment.</div>
@@ -115,7 +123,7 @@
     <div class="modal-head">
       <div class="modal-head-row">
         <h2 class="modal-title">Title Details</h2>
-        <button class="modal-close" onclick="closeDetail()">
+        <button class="modal-close" aria-label="Close details" onclick="closeDetail()">
           <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M18 6L6 18M6 6l12 12"/>
           </svg>
@@ -129,11 +137,11 @@
 
 <!-- Add to Library modal -->
 <div class="modal-overlay" id="searchModal" onclick="closeOnOverlay(event)">
-  <div class="modal">
+  <div class="modal search-modal">
     <div class="modal-head">
       <div class="modal-head-row">
         <h2 class="modal-title">Add to Library</h2>
-        <button class="modal-close" onclick="closeSearch()">
+        <button class="modal-close" aria-label="Close search" onclick="closeSearch()">
           <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M18 6L6 18M6 6l12 12"/>
           </svg>
@@ -346,7 +354,7 @@
       trigger.setAttribute('aria-expanded', 'false')
     }
     if (menu) {
-      menu.classList.remove('open')
+      menu.classList.remove('open', 'drop-up')
       menu.hidden = true
     }
     openLibraryActionMenuKey = null
@@ -363,7 +371,7 @@
         previousTrigger.setAttribute('aria-expanded', 'false')
       }
       if (previousMenu) {
-        previousMenu.classList.remove('open')
+        previousMenu.classList.remove('open', 'drop-up')
         previousMenu.hidden = true
       }
     }
@@ -374,10 +382,19 @@
     if (menu) {
       const isOpen = openLibraryActionMenuKey === key
       menu.hidden = !isOpen
+      menu.classList.remove('drop-up')
       menu.classList.toggle('open', isOpen)
       if (trigger) {
         trigger.classList.toggle('open', isOpen)
         trigger.setAttribute('aria-expanded', isOpen ? 'true' : 'false')
+      }
+      if (isOpen && trigger) {
+        const menuRect = menu.getBoundingClientRect()
+        const triggerRect = trigger.getBoundingClientRect()
+        const viewportPadding = 12
+        if (menuRect.bottom > window.innerHeight - viewportPadding && triggerRect.top > menuRect.height + viewportPadding) {
+          menu.classList.add('drop-up')
+        }
       }
     }
   }
@@ -573,7 +590,15 @@
     currentTab = currentTab === tab ? 'all' : tab
     document.getElementById('statCardMovies').classList.toggle('active', currentTab === 'movies')
     document.getElementById('statCardShows').classList.toggle('active', currentTab === 'shows')
+    document.getElementById('statCardMovies').setAttribute('aria-pressed', currentTab === 'movies' ? 'true' : 'false')
+    document.getElementById('statCardShows').setAttribute('aria-pressed', currentTab === 'shows' ? 'true' : 'false')
     loadItems()
+  }
+
+  function onStatCardKey(event, tab) {
+    if (event.key !== 'Enter' && event.key !== ' ') return
+    event.preventDefault()
+    switchTab(tab)
   }
 
   function onSearch() {
@@ -842,6 +867,15 @@
       : item.inLibrary && currentUserIsAdmin
       ? `<button class="btn btn-danger" onclick="removeItem(${item.tmdbId}, '${item.type}', this)">${item.listBacked ? 'Hide from Library' : 'Remove from Library'}</button>`
       : ''
+    const detailActions = (imdbLink || detailModeControl || removeAction)
+      ? `
+        <div class="detail-actions">
+          <div class="detail-action-group detail-action-link">${imdbLink}</div>
+          <div class="detail-action-group detail-action-mode">${detailModeControl}</div>
+          <div class="detail-action-group detail-action-danger">${removeAction}</div>
+        </div>
+      `
+      : ''
 
     const tabs = hasCollection
       ? `
@@ -899,11 +933,7 @@
         ${timingCard}
       </div>
       ${movieOverrideCard}
-      <div class="detail-actions">
-        ${imdbLink}
-        ${detailModeControl}
-        ${removeAction}
-      </div>
+      ${detailActions}
     `
 
     document.getElementById('detailBody').innerHTML = `
@@ -1183,17 +1213,34 @@
 
     if (previous != null && previous !== tmdbId) {
       const prevMenu = document.getElementById(`tvAddMenu-${previous}`)
-      if (prevMenu) prevMenu.classList.remove('open')
+      if (prevMenu) prevMenu.classList.remove('open', 'drop-up')
     }
 
     const currentMenu = document.getElementById(`tvAddMenu-${tmdbId}`)
-    if (currentMenu) currentMenu.classList.toggle('open', openTvMenuTmdbId === tmdbId)
+    if (currentMenu) {
+      const isOpen = openTvMenuTmdbId === tmdbId
+      currentMenu.classList.remove('drop-up')
+      currentMenu.classList.toggle('open', isOpen)
+      if (isOpen) {
+        const trigger = event.currentTarget
+        const menuRect = currentMenu.getBoundingClientRect()
+        const triggerRect = trigger.getBoundingClientRect()
+        const scrollContainer = currentMenu.closest('.modal-body')
+        const containerBottom = scrollContainer
+          ? Math.min(scrollContainer.getBoundingClientRect().bottom, window.innerHeight)
+          : window.innerHeight
+        const viewportPadding = 12
+        if (menuRect.bottom > containerBottom - viewportPadding && triggerRect.top > menuRect.height + viewportPadding) {
+          currentMenu.classList.add('drop-up')
+        }
+      }
+    }
   }
 
   document.addEventListener('click', () => {
     if (openTvMenuTmdbId != null) {
       const menu = document.getElementById(`tvAddMenu-${openTvMenuTmdbId}`)
-      if (menu) menu.classList.remove('open')
+      if (menu) menu.classList.remove('open', 'drop-up')
       openTvMenuTmdbId = null
     }
     closeLibraryActionMenu()
