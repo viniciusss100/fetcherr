@@ -133,13 +133,17 @@ async function getTorrentInfo(torrentId: number): Promise<TbTorrentInfo> {
 }
 
 async function requestDownloadLink(torrentId: number, fileId: number): Promise<string> {
+  const query: Record<string, string> = {
+    token:       config.torBoxApiKey,
+    torrent_id:  String(torrentId),
+    file_id:     String(fileId),
+    zip_link:    'false',
+    redirect:    'false',
+    append_name: 'true',
+  }
+  if (config.torBoxUserIp) query.user_ip = config.torBoxUserIp
   return tbFetch<string>('GET', '/torrents/requestdl', {
-    query: {
-      token:      config.torBoxApiKey,
-      torrent_id: String(torrentId),
-      file_id:    String(fileId),
-      zip_link:   'false',
-    },
+    query,
   })
 }
 
@@ -269,6 +273,35 @@ function scheduleDeleteTorrent(torrentId: number): void {
   timer.unref()
 }
 
+function normalizeHashInput(hash: string): { cacheHash: string; magnet: string; cacheKeyHash: string } {
+  const trimmed = hash.trim()
+  const magnetHash = trimmed.startsWith('magnet:')
+    ? trimmed.match(/btih:([^&]+)/i)?.[1] ?? ''
+    : ''
+  const cacheHash = (magnetHash || trimmed).toLowerCase()
+  if (!/^[a-f0-9]{40}$/i.test(cacheHash) && !/^[a-z2-7]{32}$/i.test(cacheHash)) {
+    throw new Error(`Invalid TorBox torrent hash: ${trimmed.slice(0, 16)}`)
+  }
+  return {
+    cacheHash,
+    magnet: trimmed.startsWith('magnet:') ? trimmed : `magnet:?xt=urn:btih:${cacheHash}`,
+    cacheKeyHash: cacheHash,
+  }
+}
+
+function assertDownloadUrl(value: string): string {
+  let parsed: URL
+  try {
+    parsed = new URL(value)
+  } catch {
+    throw new Error('TorBox returned an invalid download URL')
+  }
+  if (parsed.protocol !== 'https:') {
+    throw new Error(`TorBox returned a non-HTTPS download URL: ${parsed.protocol}`)
+  }
+  return parsed.toString()
+}
+
 // ── Public resolver ───────────────────────────────────────────────────────────
 
 /**
@@ -281,29 +314,35 @@ export async function resolveStream(
   filePathHint?: string,
 ): Promise<ResolvedStream> {
   if (!config.torBoxApiKey) throw new Error('TORBOX_API_KEY not configured')
+  const { cacheHash, magnet, cacheKeyHash } = normalizeHashInput(hash)
 
-  const cached = getCachedResolvedStream(hash, filePathHint)
+  const cached = getCachedResolvedStream(cacheKeyHash, filePathHint)
   if (cached) {
-    console.log(`torbox: cache hit for ${hash.slice(0, 8)}… → ${cached.filename}`)
+    console.log(`torbox: cache hit for ${cacheHash.slice(0, 8)}… → ${cached.filename}`)
     return cached
   }
 
-  const magnet = hash.startsWith('magnet:') ? hash : `magnet:?xt=urn:btih:${hash}`
-  const cacheHash = hash.startsWith('magnet:') ? hash.match(/btih:([^&]+)/i)?.[1] ?? hash : hash
   if (!await checkCached(cacheHash)) {
     throw new NotCachedError(`Torrent ${cacheHash.slice(0, 8)} is not cached on TorBox`)
   }
 
-  console.log(`torbox: adding magnet ${hash.slice(0, 8)}… to TorBox`)
+  console.log(`torbox: adding magnet ${cacheHash.slice(0, 8)}… to TorBox`)
   const created = await createTorrent(magnet)
-  console.log(`torbox: added magnet ${hash.slice(0, 8)}… as torrent ${created.torrent_id}`)
+  console.log(`torbox: added magnet ${cacheHash.slice(0, 8)}… as torrent ${created.torrent_id}`)
 
-  const info = await waitReady(created.torrent_id)
-  const file = pickBestFile(info.files, filePathHint)
-  const url  = await requestDownloadLink(created.torrent_id, file.id)
-  console.log(`torbox: resolved torrent ${created.torrent_id} → ${file.name}`)
-  scheduleDeleteTorrent(created.torrent_id)
-  const resolved: ResolvedStream = { url, filename: file.name, bytes: file.size }
-  setCachedResolvedStream(hash, filePathHint, resolved)
-  return resolved
+  try {
+    const info = await waitReady(created.torrent_id)
+    const file = pickBestFile(info.files, filePathHint)
+    const url  = assertDownloadUrl(await requestDownloadLink(created.torrent_id, file.id))
+    console.log(`torbox: resolved torrent ${created.torrent_id} → ${file.name}`)
+    scheduleDeleteTorrent(created.torrent_id)
+    const resolved: ResolvedStream = { url, filename: file.name, bytes: file.size }
+    setCachedResolvedStream(cacheKeyHash, filePathHint, resolved)
+    return resolved
+  } catch (err) {
+    void deleteTorrent(created.torrent_id)
+      .then(() => console.log(`torbox: deleted failed torrent ${created.torrent_id}`))
+      .catch((deleteErr: unknown) => console.warn(`torbox: failed to delete failed torrent ${created.torrent_id}: ${String(deleteErr)}`))
+    throw err
+  }
 }

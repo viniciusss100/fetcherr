@@ -134,7 +134,7 @@ const PLAYBACK_PREWARM_TTL_MS = 5 * 60 * 1000
 const MAX_RD_TRANSIENT_FAILURES = 3
 type FailedPlayCacheEntry = { expiresAt: number; reason: string }
 const failedPlayCache = new Map<string, FailedPlayCacheEntry>()
-type PlayResolution = { url: string; filename?: string; sourceHash?: string }
+type PlayResolution = { url: string; filename?: string; bytes?: number; sourceHash?: string; provider?: string }
 type PlaybackPrewarmEntry = { expiresAt: number; promise: Promise<PlayResolution> }
 const playbackPrewarmCache = new Map<string, PlaybackPrewarmEntry>()
 
@@ -220,35 +220,97 @@ function isNonRetryableRdError(err: ProviderUnavailableError): boolean {
 }
 
 function isTorBoxCdnUrl(url: string): boolean {
-  try { return new URL(url).hostname.endsWith('.tb-cdn.io') } catch { return false }
+  try {
+    const hostname = new URL(url).hostname.toLowerCase()
+    return hostname === 'tb-cdn.io' || hostname.endsWith('.tb-cdn.io')
+  } catch {
+    return false
+  }
+}
+
+function mediaContentType(filename?: string): string | null {
+  const ext = filename?.split('?')[0]?.split('.').pop()?.toLowerCase()
+  if (ext === 'mkv') return 'video/x-matroska'
+  if (ext === 'mp4' || ext === 'm4v') return 'video/mp4'
+  if (ext === 'avi') return 'video/x-msvideo'
+  if (ext === 'mov') return 'video/quicktime'
+  if (ext === 'ts' || ext === 'm2ts') return 'video/mp2t'
+  if (ext === 'webm') return 'video/webm'
+  return null
+}
+
+function contentDisposition(filename?: string): string | null {
+  if (!filename) return null
+  const fallback = filename
+    .replace(/[/\\:*?"<>|]/g, '_')
+    .replace(/[^\x20-\x7E]/g, '_')
+    .replace(/"/g, '_')
+    .slice(0, 180) || 'video'
+  return `inline; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(filename)}`
 }
 
 async function proxyTorBoxStream(
-  cdnUrl: string,
-  req: { method: string; headers: Record<string, string | string[] | undefined> },
-  reply: { code: (n: number) => typeof reply; header: (k: string, v: string) => typeof reply; send: (b?: unknown) => unknown },
+  resolved: PlayResolution,
+  req: {
+    method: string
+    headers: Record<string, string | string[] | undefined>
+  },
+  reply: {
+    code: (n: number) => typeof reply
+    header: (k: string, v: string) => typeof reply
+    send: (b?: unknown) => unknown
+    raw?: { once: (event: string, listener: () => void) => unknown }
+  },
 ): Promise<unknown> {
   const rangeHeader = req.headers['range']
   const range = Array.isArray(rangeHeader) ? rangeHeader[0] : rangeHeader
   const isHead = req.method === 'HEAD'
+  const upstreamRange = isHead ? (range ?? 'bytes=0-0') : range
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 30_000)
+  reply.raw?.once('close', () => controller.abort())
   let upstream: Response
   try {
-    upstream = await fetch(cdnUrl, {
-      method: isHead ? 'HEAD' : 'GET',
-      headers: range ? { Range: range } : {},
+    upstream = await fetch(resolved.url, {
+      method: 'GET',
+      headers: upstreamRange ? { Range: upstreamRange } : {},
+      signal: controller.signal,
     })
   } catch (err) {
     app.log.warn(`play: TorBox proxy fetch failed: ${err}`)
+    clearTimeout(timeout)
     return reply.code(502).send({ error: 'Upstream fetch failed' })
   }
-  reply.header('Accept-Ranges', 'bytes')
-  const ct = upstream.headers.get('Content-Type')
-  if (ct) reply.header('Content-Type', ct)
-  const cl = upstream.headers.get('Content-Length')
-  if (cl) reply.header('Content-Length', cl)
+  clearTimeout(timeout)
+  const responseHeaders: Record<string, string> = {
+    'Accept-Ranges': 'bytes',
+  }
+  const ct = mediaContentType(resolved.filename) ?? upstream.headers.get('Content-Type')
+  if (ct) responseHeaders['Content-Type'] = ct
+  const cd = contentDisposition(resolved.filename)
+  if (cd) responseHeaders['Content-Disposition'] = cd
+  const upstreamContentLength = upstream.headers.get('Content-Length')
+  const cl = isHead && resolved.bytes && !range
+    ? String(resolved.bytes)
+    : upstreamContentLength
+  if (cl) responseHeaders['Content-Length'] = cl
   const cr = upstream.headers.get('Content-Range')
-  if (cr) reply.header('Content-Range', cr)
-  reply.code(upstream.status)
+  if (cr && (!isHead || range)) responseHeaders['Content-Range'] = cr
+  const statusCode = isHead && !range && upstream.status === 206 ? 200 : upstream.status
+  if (isHead) await upstream.body?.cancel().catch(() => {})
+  if (isHead && reply.raw && 'setHeader' in reply.raw && 'end' in reply.raw) {
+    const raw = reply.raw as typeof reply.raw & {
+      statusCode: number
+      setHeader: (key: string, value: string) => void
+      end: () => void
+    }
+    raw.statusCode = statusCode
+    for (const [key, value] of Object.entries(responseHeaders)) raw.setHeader(key, value)
+    raw.end()
+    return
+  }
+  for (const [key, value] of Object.entries(responseHeaders)) reply.header(key, value)
+  reply.code(statusCode)
   if (isHead || !upstream.body) return reply.send()
   return reply.send(Readable.fromWeb(upstream.body as import('node:stream/web').ReadableStream))
 }
@@ -587,7 +649,7 @@ async function resolvePlayableStream(
         }
         app.log.info(`play: ${provider} resolved ${resolved.filename} from hash ${hash.slice(0, 8)}…`)
         clearFailedPlay(cacheKey)
-        return { url: resolved.url, filename: resolved.filename, sourceHash: hash }
+        return { url: resolved.url, filename: resolved.filename, bytes: resolved.bytes, sourceHash: hash, provider }
       } catch (err) {
         if (err instanceof PlaybackResolutionError) throw err
         app.log.warn(`play: hash ${hashLabel}… failed: ${err}; trying next`)
@@ -684,7 +746,7 @@ app.get('/play/:imdbId', async (req, reply) => {
     const { promise, reused } = getOrCreatePlaybackResolution(playPath, imdbId, () => resolveMoviePlayback(imdbId))
     if (reused) app.log.info(`play: using prewarmed resolver for ${imdbId}`)
     const resolved = await promise
-    if (isTorBoxCdnUrl(resolved.url)) return proxyTorBoxStream(resolved.url, req, reply as never)
+    if (resolved.provider === 'TorBox' && isTorBoxCdnUrl(resolved.url)) return proxyTorBoxStream(resolved, req, reply as never)
     return reply.redirect(resolved.url, 302)
   } catch (err) {
     if (err instanceof PlaybackResolutionError) {
@@ -721,7 +783,7 @@ app.get('/play/:imdbId/:season/:episode', async (req, reply) => {
     const { promise, reused } = getOrCreatePlaybackResolution(playPath, label, () => resolveEpisodePlayback(imdbId, s, e))
     if (reused) app.log.info(`play: using prewarmed resolver for ${label}`)
     const resolved = await promise
-    if (isTorBoxCdnUrl(resolved.url)) return proxyTorBoxStream(resolved.url, req, reply as never)
+    if (resolved.provider === 'TorBox' && isTorBoxCdnUrl(resolved.url)) return proxyTorBoxStream(resolved, req, reply as never)
     return reply.redirect(resolved.url, 302)
   } catch (err) {
     if (err instanceof PlaybackResolutionError) {
