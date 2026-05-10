@@ -15,7 +15,10 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-RUN apk add --no-cache ffmpeg
+RUN apk add --no-cache ffmpeg python3 && \
+    wget -q https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
+      -O /usr/local/bin/yt-dlp && \
+    chmod +x /usr/local/bin/yt-dlp
 
 ARG FETCHERR_VERSION=""
 ARG FETCHERR_COMMIT=""

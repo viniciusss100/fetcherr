@@ -9,6 +9,13 @@ export function parseStreamProviderUrls(value: string): string[] {
     .filter(Boolean)
 }
 
+export function parseMusicAddonUrls(value: string): string[] {
+  return value
+    .split(/[\r\n,]+/)
+    .map(s => normalizeSootioUrl(s))
+    .filter(Boolean)
+}
+
 export function parseTraktLists(value: string): string[] {
   return value.split(',').map(s => s.trim()).filter(Boolean)
 }
@@ -29,11 +36,16 @@ export function parseBooleanSetting(value: string | undefined, fallback = false)
 }
 
 export type EnglishStreamMode = 'off' | 'prefer' | 'require'
+export type DirectPlaybackMode = 'off' | 'torrentsOnly' | 'all'
 export type ShowAddDefaultMode = 'all' | 'latest'
 export type MovieReleaseMode = 'digital' | 'theatrical'
 
 export function parseEnglishStreamMode(value: string): EnglishStreamMode {
   return value === 'off' || value === 'require' ? value : 'prefer'
+}
+
+export function parseDirectPlaybackMode(value: string | undefined): DirectPlaybackMode {
+  return value === 'off' || value === 'all' ? value : 'torrentsOnly'
 }
 
 export function parseShowAddDefaultMode(value: string | undefined): ShowAddDefaultMode {
@@ -60,6 +72,8 @@ export const config = {
   serverName: process.env.SERVER_NAME ?? 'Fetcherr',
   serverId:   process.env.SERVER_ID  ?? 'fetcherr-001',
   rdApiKey:      process.env.RD_API_KEY ?? '',
+  torBoxApiKey:  process.env.TORBOX_API_KEY ?? '',
+  torBoxUserIp:  process.env.TORBOX_USER_IP ?? '',
   traktClientId:     process.env.TRAKT_CLIENT_ID ?? '',
   traktClientSecret: process.env.TRAKT_CLIENT_SECRET ?? '',
   traktUsername:     process.env.TRAKT_USERNAME ?? '',
@@ -74,6 +88,21 @@ export const config = {
   showAddDefaultMode: parseShowAddDefaultMode(process.env.SHOW_ADD_DEFAULT_MODE),
   movieReleaseMode: parseMovieReleaseMode(process.env.MOVIE_RELEASE_MODE),
   streamProviderUrls: parseStreamProviderUrls(process.env.STREAM_PROVIDER_URLS ?? ''),
+  musicAddonUrls: parseMusicAddonUrls(process.env.MUSIC_ADDON_URLS ?? process.env.MUSIC_ADDON_URL ?? process.env.SPOTIFLAC_URL ?? ''),
   englishStreamMode: parseEnglishStreamMode(process.env.ENGLISH_STREAM_MODE ?? ''),
+  directPlaybackMode: parseDirectPlaybackMode(process.env.DIRECT_PLAYBACK_MODE),
   serverUrl:         (process.env.SERVER_URL ?? 'http://localhost:9990').replace(/\/$/, ''),
+  // AudioBookShelf
+  absUrl:            (process.env.ABS_URL ?? '').replace(/\/$/, ''),
+  absApiKey:         process.env.ABS_API_KEY ?? '',
+  absDownloadPath:   process.env.ABS_DOWNLOAD_PATH ?? '/audiobooks',
+  // Prowlarr
+  prowlarrUrl:       (process.env.PROWLARR_URL ?? '').replace(/\/$/, ''),
+  prowlarrApiKey:    process.env.PROWLARR_API_KEY ?? '',
+  // qBittorrent
+  qbittorrentUrl:      (process.env.QBITTORRENT_URL ?? '').replace(/\/$/, ''),
+  qbittorrentUsername: process.env.QBITTORRENT_USERNAME ?? '',
+  qbittorrentPassword: process.env.QBITTORRENT_PASSWORD ?? '',
+  // MAM cookie file (updated by seedboxapi / sync_mam_cookie_to_prowlarr.py)
+  mamCookieFile: process.env.MAM_COOKIE_FILE ?? '/home/tyler/gluetun/config-mam/MAM.cookies',
 }

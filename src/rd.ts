@@ -318,6 +318,33 @@ export async function resolveStream(
   }
 }
 
+/**
+ * Check which of the given hashes are instantly available (cached) on RD.
+ * Returns a Set of lowercase hashes that are cached.
+ */
+export async function checkInstantAvailability(hashes: string[]): Promise<Set<string>> {
+  if (!config.rdApiKey || !hashes.length) return new Set()
+  const joined = hashes.map(h => encodeURIComponent(h)).join('/')
+  let res: Response
+  try {
+    res = await fetch(`${BASE}/torrents/instantAvailability/${joined}`, {
+      headers: { Authorization: `Bearer ${config.rdApiKey}` },
+      signal: AbortSignal.timeout(15_000),
+    })
+  } catch {
+    return new Set()
+  }
+  if (!res.ok) return new Set()
+  const data = await res.json() as Record<string, { rd?: unknown[] } | null>
+  const cached = new Set<string>()
+  for (const [hash, info] of Object.entries(data)) {
+    if (info && Array.isArray(info.rd) && info.rd.length > 0) {
+      cached.add(hash.toLowerCase())
+    }
+  }
+  return cached
+}
+
 export async function probeAudioLanguages(url: string): Promise<string[]> {
   const { stdout } = await execFile('ffprobe', [
     '-v', 'error',

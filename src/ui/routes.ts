@@ -3,7 +3,7 @@ import { readFileSync, existsSync } from 'fs'
 import { fileURLToPath } from 'url'
 import { join, dirname } from 'path'
 import {
-  listMovies, countMovies, listShows, countShows, countAiredEpisodes,
+  listMovies, countMovies, listShows, countShows, countAiredEpisodes, countAbsBooks,
   addSourceItem, getEffectiveShowMode, getMovieByTmdbId, getShowByTmdbId, getSetting,
   getLatestSeasonNumberForShow, getEpisodesForShow, getMovieEligibleDate, getMovieReleaseModeForLibrary,
   getManualMovieAvailabilityOverride, materializeMovieReleaseModeForExistingLibrary,
@@ -22,7 +22,7 @@ import {
   getSessionCookie, clearSessionCookie, getTokenFromCookie,
 } from './auth.js'
 import { config } from '../config.js'
-import { normalizeSootioUrl, parseBooleanSetting, parseEnglishStreamMode, parseMdblistLists, parseMovieReleaseMode, parseShowAddDefaultMode, parseStreamProviderUrls, parseTraktLists } from '../config.js'
+import { normalizeSootioUrl, parseBooleanSetting, parseDirectPlaybackMode, parseEnglishStreamMode, parseMdblistLists, parseMovieReleaseMode, parseShowAddDefaultMode, parseStreamProviderUrls, parseTraktLists } from '../config.js'
 import { fetchMovieByTmdbId, fetchMovieCollection, fetchShowByTmdbId, ensureShowSeasonsCached } from '../tmdb.js'
 import { cleanupRemovedTraktListSources, fetchTraktUserLists } from '../trakt.js'
 import { cleanupRemovedMdblistListSources, normalizeMdblistListUrls } from '../mdblist.js'
@@ -95,7 +95,7 @@ const STATIC_MIME: Record<string, string> = {
   css: 'text/css',
 }
 
-type ApiKeyService = 'rd' | 'tmdb' | 'tvdb'
+type ApiKeyService = 'rd' | 'tmdb' | 'tvdb' | 'tb'
 type LibraryStatusFilter = 'all' | 'available' | 'pending' | 'hidden' | 'manual' | 'list'
 
 interface TvdbValidationResponse {
@@ -107,17 +107,31 @@ interface TvdbValidationResponse {
 function apiKeyServiceLabel(service: ApiKeyService): string {
   if (service === 'rd') return 'Real-Debrid'
   if (service === 'tmdb') return 'TMDB'
+  if (service === 'tb') return 'TorBox'
   return 'TVDB'
 }
 
 function isApiKeyService(value: unknown): value is ApiKeyService {
-  return value === 'rd' || value === 'tmdb' || value === 'tvdb'
+  return value === 'rd' || value === 'tmdb' || value === 'tvdb' || value === 'tb'
 }
 
 function configuredApiKeyForService(service: ApiKeyService): string {
   if (service === 'rd') return config.rdApiKey
   if (service === 'tmdb') return config.tmdbApiKey
+  if (service === 'tb') return config.torBoxApiKey
   return config.tvdbApiKey
+}
+
+async function validateTorBoxApiKey(key: string) {
+  const res = await fetch('https://api.torbox.app/v1/api/user/me', {
+    headers: { Authorization: `Bearer ${key}` },
+    signal: AbortSignal.timeout(15_000),
+  })
+  if (!res.ok) throw new Error(`TorBox rejected the key (${res.status}).`)
+  const json = await res.json() as { data?: { email?: string } }
+  return {
+    label: json.data?.email ? `Account: ${json.data.email}` : 'TorBox account verified',
+  }
 }
 
 async function validateRealDebridApiKey(key: string) {
@@ -162,6 +176,7 @@ async function validateTvdbApiKey(key: string) {
 async function validateApiKeyForService(service: ApiKeyService, key: string) {
   if (service === 'rd') return validateRealDebridApiKey(key)
   if (service === 'tmdb') return validateTmdbApiKey(key)
+  if (service === 'tb') return validateTorBoxApiKey(key)
   return validateTvdbApiKey(key)
 }
 
@@ -389,7 +404,7 @@ export async function uiRoutes(app: FastifyInstance) {
     ) return
 
     if (!isUiAuthConfigured()) {
-      const isApiRoute = /^\/ui\/(stats|movies|shows|logs-data|settings-data|users-data|search|library|trakt)/.test(url)
+      const isApiRoute = /^\/ui\/(stats|movies|shows|logs-data|settings-data|users-data|search|library|trakt|books)/.test(url)
       if (isApiRoute) {
         return reply.code(503).send({ error: 'Setup required. Create an admin account first.' })
       }
@@ -398,7 +413,7 @@ export async function uiRoutes(app: FastifyInstance) {
 
     const token = getTokenFromCookie(req.headers.cookie)
     if (!token || !isValidSession(token) || !getSessionUser(token)) {
-      const isApiRoute = /^\/ui\/(stats|movies|shows|logs-data|settings-data|users-data|search|library|trakt)/.test(url)
+      const isApiRoute = /^\/ui\/(stats|movies|shows|logs-data|settings-data|users-data|search|library|trakt|books)/.test(url)
       if (isApiRoute) {
         return reply.code(401).send({ error: 'Unauthorized' })
       }
@@ -413,6 +428,7 @@ export async function uiRoutes(app: FastifyInstance) {
   app.get('/apple-touch-icon.png', async (_req, reply) => reply.redirect('/ui/static/fetcherr.svg', 302))
   app.get('/apple-touch-icon-precomposed.png', async (_req, reply) => reply.redirect('/ui/static/fetcherr.svg', 302))
   app.get('/ui/dashboard',  async (_req, reply) => reply.type('text/html').send(html('dashboard.html')))
+  app.get('/ui/books',      async (_req, reply) => reply.type('text/html').send(html('books.html')))
   app.get('/ui/setup',      async (_req, reply) => reply.redirect(isUiAuthConfigured() ? '/ui/settings' : '/ui/setup-admin'))
   app.get('/ui/logs',       async (req, reply) => {
     if (!requireAdmin(req, reply as never)) return
@@ -432,6 +448,7 @@ export async function uiRoutes(app: FastifyInstance) {
       movies,
       shows,
       episodes,
+      books:  countAbsBooks(),
       hidden: user.role === 'admin' ? countHiddenLibraryItems() : 0,
       lastSyncAt,
       nextSyncAt,
@@ -685,6 +702,7 @@ export async function uiRoutes(app: FastifyInstance) {
       sootioUrl:         config.sootioUrl,
       streamProviderUrls: config.streamProviderUrls.join('\n'),
       englishStreamMode: config.englishStreamMode,
+      directPlaybackMode: config.directPlaybackMode,
       serverUrl:         config.serverUrl,
       traktClientId:     config.traktClientId,
       traktWatchlistMovies: config.traktWatchlistMovies,
@@ -698,6 +716,7 @@ export async function uiRoutes(app: FastifyInstance) {
       traktLists:        config.traktLists,
       hasSootioUrl:      !!getSetting('sootioUrl'),
       hasRdApiKey:       !!getSetting('rdApiKey'),
+      hasTorBoxApiKey:   !!getSetting('torBoxApiKey'),
       hasTmdbApiKey:     !!getSetting('tmdbApiKey'),
       hasTvdbApiKey:     !!getSetting('tvdbApiKey'),
       hasTraktClientSecret: !!getSetting('traktClientSecret'),
@@ -765,7 +784,7 @@ export async function uiRoutes(app: FastifyInstance) {
     if (!user || user.role !== 'admin') return reply.code(403).send({ error: 'Admin access required' })
     const body = (req.body ?? {}) as Record<string, string | string[] | boolean>
     const editable: (keyof typeof config)[] = [
-      'sootioUrl', 'rdApiKey', 'tmdbApiKey', 'tvdbApiKey', 'serverUrl', 'traktClientId', 'traktClientSecret', 'mdblistApiKey',
+      'sootioUrl', 'rdApiKey', 'torBoxApiKey', 'tmdbApiKey', 'tvdbApiKey', 'serverUrl', 'traktClientId', 'traktClientSecret', 'mdblistApiKey',
     ]
     for (const key of editable) {
       if (typeof body[key] === 'string') {
@@ -785,6 +804,11 @@ export async function uiRoutes(app: FastifyInstance) {
       const mode = parseEnglishStreamMode(body.englishStreamMode)
       setSetting('englishStreamMode', mode)
       config.englishStreamMode = mode
+    }
+    if (typeof body.directPlaybackMode === 'string') {
+      const mode = parseDirectPlaybackMode(body.directPlaybackMode)
+      setSetting('directPlaybackMode', mode)
+      config.directPlaybackMode = mode
     }
     if (body.traktWatchlistMovies != null) {
       const enabled = parseBooleanSetting(String(body.traktWatchlistMovies), true)

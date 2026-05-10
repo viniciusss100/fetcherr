@@ -1,5 +1,6 @@
+import { Readable } from 'node:stream'
 import Fastify from 'fastify'
-import { config, normalizeSootioUrl, parseBooleanSetting, parseEnglishStreamMode, parseMdblistLists, parseMovieReleaseMode, parseShowAddDefaultMode, parseStreamProviderUrls, parseTraktLists } from './config.js'
+import { config, normalizeSootioUrl, parseBooleanSetting, parseDirectPlaybackMode, parseEnglishStreamMode, parseMdblistLists, parseMovieReleaseMode, parseMusicAddonUrls, parseShowAddDefaultMode, parseStreamProviderUrls, parseTraktLists } from './config.js'
 import { getDb, getAllSettings } from './db.js'
 import { jellyfinRoutes, resolveJellyfinUser } from './jellyfin/index.js'
 import { uiRoutes } from './ui/routes.js'
@@ -8,18 +9,22 @@ import { markSyncComplete } from './sync-state.js'
 import { cleanupRemovedTraktListSources, syncTraktWatchlist, syncTraktShowsWatchlist, syncTraktList, syncTraktWatchedStatus, startDeviceAuth, tokenStatus } from './trakt.js'
 import { cleanupRemovedMdblistListSources, normalizeMdblistListUrls, syncMdblistList } from './mdblist.js'
 import { fetchRankedStreams, fetchRankedEpisodeStreams, extractHashFromStream } from './sootio.js'
-import { resolveStream, probeAudioLanguages, NotCachedError, ProviderUnavailableError } from './rd.js'
+import { resolveStream, probeAudioLanguages, NotCachedError, ProviderUnavailableError, type ResolvedStream } from './rd.js'
+import { resolveStream as tbResolveStream } from './torbox.js'
 import { getMovieByTmdbId, getShowByImdbId, getEpisodesForSeason, getLatestSeasonNumberForShow, listLatestSeasonShowSubscriptions, listMovies, listShows, pruneAllOrphanedMovies, pruneAllOrphanedShows, removeSourceKey, upsertManualShowSubscription } from './db.js'
 import { ensureShowSeasonsCached, refreshShowMetadataIfNeeded, refreshMovieMetadataIfNeeded } from './tmdb.js'
 import { getSessionUser, getTokenFromCookie, isUiAuthConfigured, isValidSession } from './ui/auth.js'
 import { verifySignedPlaybackPath } from './play-auth.js'
 import { hasEnglishAudioMarker, hasNonEnglishAudioMarker } from './streamLanguage.js'
+import { subsonicRoutes } from './music/subsonic.js'
+import { bookRoutes } from './books/routes.js'
+import { syncAbsLibrary } from './audiobookshelf.js'
 
 const app = Fastify({
   logger: { level: 'info' },
   trustProxy: true,
   routerOptions: { ignoreTrailingSlash: true },
-  rewriteUrl: (req) => req.url!.replace(/\/\/+/g, '/'),
+  rewriteUrl: (req) => req.url!.replace(/\/\/+/g, '/').replace(/\.view(\?|$)/, '$1'),
 })
 
 app.addHook('onRequest', async (_req, reply) => {
@@ -50,6 +55,8 @@ getDb()
   const s = getAllSettings()
   if (s.sootioUrl)          config.sootioUrl          = normalizeSootioUrl(s.sootioUrl)
   if (s.rdApiKey)           config.rdApiKey            = s.rdApiKey
+  if (s.torBoxApiKey)       config.torBoxApiKey        = s.torBoxApiKey
+  if (s.torBoxUserIp)       config.torBoxUserIp        = s.torBoxUserIp
   if (s.tmdbApiKey)         config.tmdbApiKey          = s.tmdbApiKey
   if (s.tvdbApiKey)         config.tvdbApiKey          = s.tvdbApiKey
   if (s.serverUrl)          config.serverUrl           = s.serverUrl
@@ -65,7 +72,9 @@ getDb()
   if (s.showAddDefaultMode != null) config.showAddDefaultMode = parseShowAddDefaultMode(s.showAddDefaultMode)
   if (s.movieReleaseMode != null) config.movieReleaseMode = parseMovieReleaseMode(s.movieReleaseMode)
   if (s.streamProviderUrls != null) config.streamProviderUrls = parseStreamProviderUrls(s.streamProviderUrls)
+  if (s.musicAddonUrls != null) config.musicAddonUrls = parseMusicAddonUrls(s.musicAddonUrls)
   if (s.englishStreamMode != null) config.englishStreamMode = parseEnglishStreamMode(s.englishStreamMode)
+  if (s.directPlaybackMode != null) config.directPlaybackMode = parseDirectPlaybackMode(s.directPlaybackMode)
 }
 
 // Wrap Fastify logger so UI log viewer captures it
@@ -210,6 +219,40 @@ function isNonRetryableRdError(err: ProviderUnavailableError): boolean {
   return err.status === 401 || err.status === 403 || err.status === 429
 }
 
+function isTorBoxCdnUrl(url: string): boolean {
+  try { return new URL(url).hostname.endsWith('.tb-cdn.io') } catch { return false }
+}
+
+async function proxyTorBoxStream(
+  cdnUrl: string,
+  req: { method: string; headers: Record<string, string | string[] | undefined> },
+  reply: { code: (n: number) => typeof reply; header: (k: string, v: string) => typeof reply; send: (b?: unknown) => unknown },
+): Promise<unknown> {
+  const rangeHeader = req.headers['range']
+  const range = Array.isArray(rangeHeader) ? rangeHeader[0] : rangeHeader
+  const isHead = req.method === 'HEAD'
+  let upstream: Response
+  try {
+    upstream = await fetch(cdnUrl, {
+      method: isHead ? 'HEAD' : 'GET',
+      headers: range ? { Range: range } : {},
+    })
+  } catch (err) {
+    app.log.warn(`play: TorBox proxy fetch failed: ${err}`)
+    return reply.code(502).send({ error: 'Upstream fetch failed' })
+  }
+  reply.header('Accept-Ranges', 'bytes')
+  const ct = upstream.headers.get('Content-Type')
+  if (ct) reply.header('Content-Type', ct)
+  const cl = upstream.headers.get('Content-Length')
+  if (cl) reply.header('Content-Length', cl)
+  const cr = upstream.headers.get('Content-Range')
+  if (cr) reply.header('Content-Range', cr)
+  reply.code(upstream.status)
+  if (isHead || !upstream.body) return reply.send()
+  return reply.send(Readable.fromWeb(upstream.body as import('node:stream/web').ReadableStream))
+}
+
 const VIDEO_EXTS = new Set(['mkv','mp4','avi','mov','m4v','ts','m2ts','wmv','flv','webm'])
 
 function isVideoFile(filename: string): boolean {
@@ -250,6 +293,30 @@ function streamClearlyNonEnglish(stream: { name?: string; title?: string; descri
   return hasNonEnglish && !hasEnglish
 }
 
+function streamClearlyUsenetBacked(stream: { name?: string; title?: string; description?: string; behaviorHints?: Record<string, unknown> }): boolean {
+  const text = streamMetadataText(stream)
+  return /\busenet\b|\bnewznab\b/.test(text)
+}
+
+function directPlaybackPenalty(stream: { name?: string; title?: string; description?: string; behaviorHints?: Record<string, unknown>; url?: string }): number {
+  if (!isDirectPlaybackUrl(stream.url)) return 0
+  const text = streamMetadataText(stream)
+  // Debrid-resolved CDN streams (TB+, RD+) are already optimal — trust original quality ranking
+  if (/\[rd\+\]|\[rd ⚡\]|\[rd⚡\]|\brd\+\b|\[tb\+\]|\[tb ⚡\]|\[tb⚡\]|\btb\+\b/.test(text)) return 0
+  const size = typeof stream.behaviorHints?.videoSize === 'number' ? stream.behaviorHints.videoSize : 0
+  let penalty = 0
+  if (/\b(2160p|4k|uhd)\b/.test(text)) penalty += 100
+  if (/\bremux\b/.test(text)) penalty += 80
+  if (/\b(dv|dolby[ ._-]*vision|hdr10?|hdr)\b/.test(text)) penalty += 50
+  if (/\b(atmos|truehd|dts[ ._-]*hd|dts-hd)\b/.test(text)) penalty += 40
+  if (/\b(hevc|h\.?265|x265|10bit)\b/.test(text)) penalty += 30
+  if (size > 20_000_000_000) penalty += 80
+  else if (size > 10_000_000_000) penalty += 40
+  else if (size > 5_000_000_000) penalty += 20
+  if (/\b(h\.?264|x264|avc)\b/.test(text)) penalty -= 20
+  return penalty
+}
+
 function isRemoteAudioProbeUnreliable(filename: string): boolean {
   return /\.(mp4|m4v)$/i.test(filename)
 }
@@ -261,6 +328,40 @@ function isDirectPlaybackUrl(url?: string): url is string {
     return parsed.protocol === 'http:' || parsed.protocol === 'https:'
   } catch {
     return false
+  }
+}
+
+function filenameFromDirectPlaybackUrl(url?: string): string | undefined {
+  if (!url) return undefined
+  try {
+    const parsed = new URL(url)
+    const lastSegment = parsed.pathname.split('/').filter(Boolean).pop()
+    return lastSegment ? decodeURIComponent(lastSegment) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+async function resolveDirectPlaybackUrl(url: string): Promise<string> {
+  try {
+    const res = await fetch(url, {
+      method: 'GET',
+      redirect: 'follow',
+      headers: { Range: 'bytes=0-0' },
+      signal: AbortSignal.timeout(20_000),
+    })
+    if (!res.ok && res.status !== 206) {
+      throw new Error(`direct playback probe returned ${res.status}`)
+    }
+    if (res.url && res.url !== url) {
+      let host = 'unknown host'
+      try { host = new URL(res.url).host } catch { /* ignore */ }
+      app.log.info(`play: direct playback URL resolved to ${host}`)
+    }
+    return res.url || url
+  } catch (err) {
+    app.log.warn(`play: direct playback URL probe failed: ${summarizeProbeError(err)}`)
+    return url
   }
 }
 
@@ -289,18 +390,41 @@ function hasOnlyUndeterminedAudio(languages: string[]): boolean {
   return normalized.length > 0 && normalized.every(lang => lang === 'und' || lang === 'undetermined' || lang === 'zxx')
 }
 
+function summarizeProbeError(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err)
+  return message
+    .replace(/https?:\/\/\S+/g, '[url]')
+    .split('\n')[0]
+    .slice(0, 500)
+}
+
 async function resolvePlayableStream(
   streams: Awaited<ReturnType<typeof fetchRankedStreams>>,
   label: string,
   cacheKey: string,
   fileHint?: string,
 ): Promise<PlayResolution> {
-  if (config.rdApiKey) {
+  if (config.rdApiKey || config.torBoxApiKey) {
     let rdTransientFailures = 0
+    let tbTransientFailures = 0
     app.log.info(`play: trying ${streams.length} ranked candidate${streams.length === 1 ? '' : 's'} for ${label}`)
-    for (const stream of streams) {
+    const orderedStreams = streams
+      .map((stream, index) => ({ stream, index }))
+      .sort((a, b) => {
+        const aHash = extractHashFromStream(a.stream)
+        const bHash = extractHashFromStream(b.stream)
+        const aDirect = !aHash && isDirectPlaybackUrl(a.stream.url)
+        const bDirect = !bHash && isDirectPlaybackUrl(b.stream.url)
+        if (aHash && !bHash) return -1
+        if (!aHash && bHash) return 1
+        if (aDirect && bDirect) {
+          return directPlaybackPenalty(a.stream) - directPlaybackPenalty(b.stream) || a.index - b.index
+        }
+        return a.index - b.index
+      })
+      .map(entry => entry.stream)
+    for (const stream of orderedStreams) {
       const providerOrder = stream.providerOrder ?? 999
-
       const hash = extractHashFromStream(stream)
       const hashLabel = hash ? hash.slice(0, 8) : 'direct-url'
       try {
@@ -309,13 +433,128 @@ async function resolvePlayableStream(
           continue
         }
 
+        const hint = streamFilenameHint(stream) ?? fileHint
         if (!hash) {
-          app.log.info(`play: skipping providerOrder=${providerOrder} for ${label}, no torrent hash exposed`)
-          continue
+          if (!config.torBoxApiKey || config.directPlaybackMode !== 'all' || !isDirectPlaybackUrl(stream.url)) {
+            app.log.info(`play: skipping providerOrder=${providerOrder} for ${label}, no torrent hash exposed`)
+            continue
+          }
+
+          const directFilename = hint ?? filenameFromDirectPlaybackUrl(stream.url)
+          if (directFilename && !isVideoFile(directFilename)) {
+            app.log.info(`play: skipping non-video direct stream ${directFilename}, trying next`)
+            continue
+          }
+          if (directFilename && isLikelyBadResolvedFilename(directFilename)) {
+            app.log.info(`play: skipping suspicious direct stream ${directFilename}, trying next`)
+            continue
+          }
+          if (
+            directFilename
+            && config.englishStreamMode === 'require'
+            && isRemoteAudioProbeUnreliable(directFilename)
+            && !streamClearlyEnglish(stream)
+          ) {
+            app.log.info(`play: skipping unprobeable ${directFilename}, no confirmed English metadata`)
+            continue
+          }
+          const isDebridCachedStream = /\[rd\+\]|\[rd ⚡\]|\[rd⚡\]|\brd\+\b|\[tb\+\]|\[tb ⚡\]|\[tb⚡\]|\btb\+\b/.test(streamMetadataText(stream))
+          // Skip ffprobe for debrid-cached streams — their proxy URLs will be resolved to
+          // CDN URLs at play-time; probing here would waste a TorBox add/delete cycle.
+          if (!isDebridCachedStream && directFilename && shouldProbeEnglishAudio(stream, directFilename)) {
+            try {
+              const audioLanguages = await probeAudioLanguages(stream.url)
+              app.log.info(`play: ffprobe audio languages for ${directFilename}: ${audioLanguages.join(', ') || 'none'}`)
+              const noLanguageInfo = audioLanguages.length === 0
+              const allowsUndetermined = (hasOnlyUndeterminedAudio(audioLanguages) || noLanguageInfo) && !streamClearlyNonEnglish(stream)
+              if (config.englishStreamMode === 'require' && !hasEnglishAudio(audioLanguages) && !allowsUndetermined) {
+                app.log.info(`play: skipping ${directFilename}, no English audio detected`)
+                continue
+              }
+            } catch (err) {
+              app.log.warn(`play: ffprobe failed for ${directFilename}: ${summarizeProbeError(err)}`)
+            }
+          }
+
+          app.log.info(`play: direct stream selected for ${label}${directFilename ? ` → ${directFilename}` : ''}`)
+          clearFailedPlay(cacheKey)
+          return { url: stream.url, filename: directFilename }
         }
 
         app.log.info(`play: trying providerOrder=${providerOrder} hash ${hash.slice(0, 8)}… for ${label}`)
-        const resolved = await resolveStream(hash, streamFilenameHint(stream) ?? fileHint)
+        let resolved: ResolvedStream | null = null
+        let provider = ''
+
+        if (config.rdApiKey) {
+          try {
+            resolved = await resolveStream(hash, hint)
+            provider = 'RD'
+          } catch (rdErr) {
+            if (rdErr instanceof NotCachedError) {
+              app.log.info(`play: hash ${hashLabel}… not cached on RD${config.torBoxApiKey ? ', trying TorBox' : ''}`)
+            } else if (rdErr instanceof ProviderUnavailableError) {
+              rdTransientFailures += 1
+              const retryable = !isNonRetryableRdError(rdErr) && rdTransientFailures < MAX_RD_TRANSIENT_FAILURES
+              if (retryable) {
+                app.log.warn(
+                  `play: RD error for providerOrder=${providerOrder} hash ${hashLabel}…: ${rdErr}; ` +
+                  `trying next candidate (${rdTransientFailures}/${MAX_RD_TRANSIENT_FAILURES})`
+                )
+              } else {
+                app.log.warn(
+                  `play: RD unavailable for ${label} after ${rdTransientFailures} failure${rdTransientFailures === 1 ? '' : 's'}: ${rdErr}` +
+                  (config.torBoxApiKey ? '; falling back to TorBox' : '; not caching playback miss')
+                )
+                if (!config.torBoxApiKey) {
+                  throw new PlaybackResolutionError(
+                    'Real-Debrid unavailable',
+                    503,
+                    { error: 'Real-Debrid unavailable', message: 'Real-Debrid Unavailable' },
+                  )
+                }
+              }
+            } else {
+              app.log.warn(`play: hash ${hashLabel}… RD failed: ${rdErr}`)
+            }
+          }
+        }
+
+        if (!resolved && config.torBoxApiKey) {
+          try {
+            resolved = await tbResolveStream(hash, hint)
+            provider = 'TorBox'
+          } catch (tbErr) {
+            if (tbErr instanceof NotCachedError) {
+              app.log.info(`play: hash ${hashLabel}… not cached on TorBox, trying next`)
+              continue
+            }
+            if (tbErr instanceof ProviderUnavailableError) {
+              tbTransientFailures += 1
+              const retryable = !isNonRetryableRdError(tbErr) && tbTransientFailures < MAX_RD_TRANSIENT_FAILURES
+              if (retryable) {
+                app.log.warn(
+                  `play: TorBox error for providerOrder=${providerOrder} hash ${hashLabel}…: ${tbErr}; ` +
+                  `trying next candidate (${tbTransientFailures}/${MAX_RD_TRANSIENT_FAILURES})`
+                )
+                continue
+              }
+              app.log.warn(
+                `play: TorBox unavailable for ${label} after ${tbTransientFailures} failure${tbTransientFailures === 1 ? '' : 's'}: ${tbErr}; ` +
+                'not caching playback miss'
+              )
+              throw new PlaybackResolutionError(
+                'Debrid provider unavailable',
+                503,
+                { error: 'Debrid provider unavailable', message: 'Debrid Unavailable' },
+              )
+            }
+            app.log.warn(`play: hash ${hashLabel}… TorBox failed: ${tbErr}; trying next`)
+            continue
+          }
+        }
+
+        if (!resolved) continue
+
         if (!isVideoFile(resolved.filename)) {
           app.log.info(`play: skipping non-video file ${resolved.filename}, trying next`)
           continue
@@ -341,43 +580,20 @@ async function resolvePlayableStream(
             if (config.englishStreamMode === 'require' && !hasEnglishAudio(audioLanguages) && !allowsUndetermined) {
               app.log.info(`play: skipping ${resolved.filename}, no English audio detected`)
               continue
-            }
-          } catch (err) {
-            app.log.warn(`play: ffprobe failed for ${resolved.filename}: ${err}`)
+          }
+        } catch (err) {
+            app.log.warn(`play: ffprobe failed for ${resolved.filename}: ${summarizeProbeError(err)}`)
           }
         }
-        app.log.info(`play: RD resolved ${resolved.filename} from hash ${hash.slice(0, 8)}…`)
+        app.log.info(`play: ${provider} resolved ${resolved.filename} from hash ${hash.slice(0, 8)}…`)
         clearFailedPlay(cacheKey)
         return { url: resolved.url, filename: resolved.filename, sourceHash: hash }
       } catch (err) {
-        if (err instanceof NotCachedError) {
-          app.log.info(`play: hash ${hashLabel}… not cached, trying next`)
-          continue
-        }
-        if (err instanceof ProviderUnavailableError) {
-          rdTransientFailures += 1
-          const retryable = !isNonRetryableRdError(err) && rdTransientFailures < MAX_RD_TRANSIENT_FAILURES
-          if (retryable) {
-            app.log.warn(
-              `play: RD error for providerOrder=${providerOrder} hash ${hashLabel}…: ${err}; ` +
-              `trying next candidate (${rdTransientFailures}/${MAX_RD_TRANSIENT_FAILURES})`
-            )
-            continue
-          }
-          app.log.warn(
-            `play: RD unavailable for ${label} after ${rdTransientFailures} failure${rdTransientFailures === 1 ? '' : 's'}: ${err}; ` +
-            'not caching playback miss'
-          )
-          throw new PlaybackResolutionError(
-            'Real-Debrid unavailable',
-            503,
-            { error: 'Real-Debrid unavailable', message: 'Real-Debrid Unavailable' },
-          )
-        }
+        if (err instanceof PlaybackResolutionError) throw err
         app.log.warn(`play: hash ${hashLabel}… failed: ${err}; trying next`)
       }
     }
-    app.log.warn(`play: no usable RD-cached stream found for ${label}`)
+    app.log.warn(`play: no usable cached stream found for ${label}`)
     cacheFailedPlay(cacheKey, 'No cached stream available')
     throw new PlaybackResolutionError(
       'No cached stream available',
@@ -447,15 +663,15 @@ function playbackResolverForPath(playPath: string): (() => Promise<PlayResolutio
 }
 
 app.get('/play/:imdbId', async (req, reply) => {
-  if (!requestPlaybackUser(req.headers)) {
-    app.log.warn(`play: rejected unauthenticated playback request for ${(req.params as { imdbId: string }).imdbId}`)
-    return reply.code(401).send({ error: 'Unauthorized' })
-  }
   const { imdbId } = req.params as { imdbId: string }
   const query = req.query as { token?: string; expires?: string } | undefined
   const playPath = `/play/${imdbId}`
   if (!verifySignedPlaybackPath(playPath, query?.token, query?.expires)) {
-    app.log.warn(`play: rejected unsigned or expired playback request for ${imdbId}`)
+    if (!requestPlaybackUser(req.headers)) {
+      app.log.warn(`play: rejected unauthenticated playback request for ${imdbId}`)
+    } else {
+      app.log.warn(`play: rejected unsigned or expired playback request for ${imdbId}`)
+    }
     return reply.code(401).send({ error: 'Unauthorized' })
   }
   const failedReason = getFailedPlayReason(playPath)
@@ -468,6 +684,7 @@ app.get('/play/:imdbId', async (req, reply) => {
     const { promise, reused } = getOrCreatePlaybackResolution(playPath, imdbId, () => resolveMoviePlayback(imdbId))
     if (reused) app.log.info(`play: using prewarmed resolver for ${imdbId}`)
     const resolved = await promise
+    if (isTorBoxCdnUrl(resolved.url)) return proxyTorBoxStream(resolved.url, req, reply as never)
     return reply.redirect(resolved.url, 302)
   } catch (err) {
     if (err instanceof PlaybackResolutionError) {
@@ -480,16 +697,15 @@ app.get('/play/:imdbId', async (req, reply) => {
 })
 
 app.get('/play/:imdbId/:season/:episode', async (req, reply) => {
-  if (!requestPlaybackUser(req.headers)) {
-    const { imdbId, season, episode } = req.params as { imdbId: string; season: string; episode: string }
-    app.log.warn(`play: rejected unauthenticated episode playback request for ${imdbId} S${season}E${episode}`)
-    return reply.code(401).send({ error: 'Unauthorized' })
-  }
   const { imdbId, season, episode } = req.params as { imdbId: string; season: string; episode: string }
   const query = req.query as { token?: string; expires?: string } | undefined
   const playPath = `/play/${imdbId}/${season}/${episode}`
   if (!verifySignedPlaybackPath(playPath, query?.token, query?.expires)) {
-    app.log.warn(`play: rejected unsigned or expired episode playback request for ${imdbId} S${season}E${episode}`)
+    if (!requestPlaybackUser(req.headers)) {
+      app.log.warn(`play: rejected unauthenticated episode playback request for ${imdbId} S${season}E${episode}`)
+    } else {
+      app.log.warn(`play: rejected unsigned or expired episode playback request for ${imdbId} S${season}E${episode}`)
+    }
     return reply.code(401).send({ error: 'Unauthorized' })
   }
   const failedReason = getFailedPlayReason(playPath)
@@ -505,6 +721,7 @@ app.get('/play/:imdbId/:season/:episode', async (req, reply) => {
     const { promise, reused } = getOrCreatePlaybackResolution(playPath, label, () => resolveEpisodePlayback(imdbId, s, e))
     if (reused) app.log.info(`play: using prewarmed resolver for ${label}`)
     const resolved = await promise
+    if (isTorBoxCdnUrl(resolved.url)) return proxyTorBoxStream(resolved.url, req, reply as never)
     return reply.redirect(resolved.url, 302)
   } catch (err) {
     if (err instanceof PlaybackResolutionError) {
@@ -520,6 +737,8 @@ app.get('/play/:imdbId/:season/:episode', async (req, reply) => {
 await app.register(jellyfinRoutes, { prewarmPlayback })
 await app.register(jellyfinRoutes, { prefix: '/emby', prewarmPlayback })
 await app.register(uiRoutes)
+await app.register(subsonicRoutes)
+await app.register(bookRoutes)
 
 // ── Trakt auth ────────────────────────────────────────────────────────────────
 
@@ -642,6 +861,11 @@ async function runSyncInternal() {
   }
 
   markSyncComplete()
+
+  // Sync AudioBookShelf library (best-effort)
+  if (config.absUrl && config.absApiKey) {
+    await syncAbsLibrary().catch(err => app.log.error(`ABS sync failed: ${err}`))
+  }
 }
 
 function runSync(): Promise<void> {

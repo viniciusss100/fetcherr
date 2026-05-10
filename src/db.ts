@@ -112,6 +112,106 @@ export interface UiSession {
   createdAt: string
 }
 
+export interface MusicRelease {
+  hash: string
+  title: string
+  artist: string
+  album: string
+  year: number
+  bytes: number
+  seeders: number
+  category: string
+  resolvedAt: string
+  lastSeenAt: string
+}
+
+export interface MusicTrack {
+  id: string
+  releaseHash: string
+  fileIdx: number
+  filePath: string
+  title: string
+  trackNum: number
+  artist: string
+  album: string
+  year: number
+  bytes: number
+  durationSecs: number
+  ext: string
+  createdAt: string
+}
+
+export interface MusicCandidate {
+  id: string
+  queryKey: string
+  releaseHash: string
+  rank: number
+  createdAt: string
+}
+
+export interface MusicMetaAlbum {
+  id: string
+  source: string
+  sourceId: string
+  name: string
+  artist: string
+  year: number
+  artworkUrl: string
+  trackCount: number
+  durationSecs: number
+  updatedAt: string
+}
+
+export interface MusicMetaTrack {
+  id: string
+  albumId: string
+  sourceTrackId: string
+  title: string
+  artist: string
+  album: string
+  trackNum: number
+  discNum: number
+  durationSecs: number
+  artworkUrl: string
+  youtubeId: string
+  youtubeResolvedAt: string
+  updatedAt: string
+}
+
+export interface AbsBook {
+  id:             string
+  title:          string
+  author:         string
+  narrator:       string
+  series:         string
+  seriesSequence: string
+  description:    string
+  coverPath:      string
+  durationSecs:   number
+  publishedYear:  string
+  genres:         string  // JSON array
+  libraryId:      string
+  syncedAt:       string
+}
+
+export type BookRequestStatus = 'pending' | 'downloading' | 'completed' | 'failed'
+
+export interface BookRequest {
+  id:           number
+  query:        string
+  status:       BookRequestStatus
+  indexer:      string
+  resultTitle:  string
+  torrentHash:  string
+  torrentUrl:   string
+  magnetUrl:    string
+  downloadPath: string
+  error:        string
+  requestedBy:  string
+  createdAt:    string
+  updatedAt:    string
+}
+
 export const DEFAULT_ADMIN_USER_ID = 'a0000000-0000-0000-0000-000000000002'
 export const MAX_RATING_OPTIONS = [
   'unrestricted',
@@ -289,6 +389,118 @@ CREATE TABLE IF NOT EXISTS user_item_data (
   PRIMARY KEY (user_id, item_id)
 );
 CREATE INDEX IF NOT EXISTS user_item_data_resume ON user_item_data(user_id, played, last_played_date);
+
+CREATE TABLE IF NOT EXISTS music_releases (
+  hash          TEXT    PRIMARY KEY,
+  title         TEXT    NOT NULL,
+  artist        TEXT    NOT NULL DEFAULT '',
+  album         TEXT    NOT NULL DEFAULT '',
+  year          INTEGER NOT NULL DEFAULT 0,
+  bytes         INTEGER NOT NULL DEFAULT 0,
+  seeders       INTEGER NOT NULL DEFAULT 0,
+  category      TEXT    NOT NULL DEFAULT '',
+  resolved_at   TEXT    NOT NULL DEFAULT '',
+  last_seen_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+CREATE INDEX IF NOT EXISTS music_releases_last_seen ON music_releases(last_seen_at DESC);
+CREATE INDEX IF NOT EXISTS music_releases_title ON music_releases(title);
+
+CREATE TABLE IF NOT EXISTS music_tracks (
+  id             TEXT    PRIMARY KEY,
+  release_hash   TEXT    NOT NULL,
+  file_idx       INTEGER NOT NULL,
+  file_path      TEXT    NOT NULL DEFAULT '',
+  title          TEXT    NOT NULL,
+  track_num      INTEGER NOT NULL DEFAULT 0,
+  artist         TEXT    NOT NULL DEFAULT '',
+  album          TEXT    NOT NULL DEFAULT '',
+  year           INTEGER NOT NULL DEFAULT 0,
+  bytes          INTEGER NOT NULL DEFAULT 0,
+  duration_secs  INTEGER NOT NULL DEFAULT 0,
+  ext            TEXT    NOT NULL DEFAULT '',
+  created_at     TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+  UNIQUE(release_hash, file_idx)
+);
+CREATE INDEX IF NOT EXISTS music_tracks_release ON music_tracks(release_hash, track_num, title);
+
+CREATE TABLE IF NOT EXISTS music_candidates (
+  id            TEXT    PRIMARY KEY,
+  query_key     TEXT    NOT NULL,
+  release_hash  TEXT    NOT NULL,
+  rank          INTEGER NOT NULL DEFAULT 0,
+  created_at    TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+  UNIQUE(query_key, release_hash)
+);
+CREATE INDEX IF NOT EXISTS music_candidates_query ON music_candidates(query_key, rank);
+
+CREATE TABLE IF NOT EXISTS music_meta_albums (
+  id             TEXT    PRIMARY KEY,
+  source         TEXT    NOT NULL,
+  source_id      TEXT    NOT NULL,
+  name           TEXT    NOT NULL,
+  artist         TEXT    NOT NULL DEFAULT '',
+  year           INTEGER NOT NULL DEFAULT 0,
+  artwork_url    TEXT    NOT NULL DEFAULT '',
+  track_count    INTEGER NOT NULL DEFAULT 0,
+  duration_secs  INTEGER NOT NULL DEFAULT 0,
+  updated_at     TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+  UNIQUE(source, source_id)
+);
+CREATE INDEX IF NOT EXISTS music_meta_albums_search ON music_meta_albums(artist, name);
+
+CREATE TABLE IF NOT EXISTS music_meta_tracks (
+  id                   TEXT    PRIMARY KEY,
+  album_id             TEXT    NOT NULL,
+  source_track_id      TEXT    NOT NULL,
+  title                TEXT    NOT NULL,
+  artist               TEXT    NOT NULL DEFAULT '',
+  album                TEXT    NOT NULL DEFAULT '',
+  track_num            INTEGER NOT NULL DEFAULT 0,
+  disc_num             INTEGER NOT NULL DEFAULT 0,
+  duration_secs        INTEGER NOT NULL DEFAULT 0,
+  artwork_url          TEXT    NOT NULL DEFAULT '',
+  youtube_id           TEXT    NOT NULL DEFAULT '',
+  youtube_resolved_at  TEXT    NOT NULL DEFAULT '',
+  updated_at           TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+  UNIQUE(album_id, source_track_id)
+);
+CREATE INDEX IF NOT EXISTS music_meta_tracks_album ON music_meta_tracks(album_id, disc_num, track_num, title);
+
+CREATE TABLE IF NOT EXISTS abs_books (
+  id              TEXT    PRIMARY KEY,
+  title           TEXT    NOT NULL,
+  author          TEXT    NOT NULL DEFAULT '',
+  narrator        TEXT    NOT NULL DEFAULT '',
+  series          TEXT    NOT NULL DEFAULT '',
+  series_sequence TEXT    NOT NULL DEFAULT '',
+  description     TEXT    NOT NULL DEFAULT '',
+  cover_path      TEXT    NOT NULL DEFAULT '',
+  duration_secs   REAL    NOT NULL DEFAULT 0,
+  published_year  TEXT    NOT NULL DEFAULT '',
+  genres          TEXT    NOT NULL DEFAULT '[]',
+  library_id      TEXT    NOT NULL DEFAULT '',
+  synced_at       TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+CREATE INDEX IF NOT EXISTS abs_books_title  ON abs_books(title);
+CREATE INDEX IF NOT EXISTS abs_books_author ON abs_books(author);
+
+CREATE TABLE IF NOT EXISTS book_requests (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  query          TEXT    NOT NULL,
+  status         TEXT    NOT NULL DEFAULT 'pending',
+  indexer        TEXT    NOT NULL DEFAULT '',
+  result_title   TEXT    NOT NULL DEFAULT '',
+  torrent_hash   TEXT    NOT NULL DEFAULT '',
+  torrent_url    TEXT    NOT NULL DEFAULT '',
+  magnet_url     TEXT    NOT NULL DEFAULT '',
+  download_path  TEXT    NOT NULL DEFAULT '',
+  error          TEXT    NOT NULL DEFAULT '',
+  requested_by   TEXT    NOT NULL DEFAULT '',
+  created_at     TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+  updated_at     TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+CREATE INDEX IF NOT EXISTS book_requests_status     ON book_requests(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS book_requests_created_at ON book_requests(created_at DESC);
 `
 
 let _db: Database.Database | null = null
@@ -318,6 +530,8 @@ export function getDb(): Database.Database {
     try { _db.exec(`ALTER TABLE episodes ADD COLUMN community_rating REAL NOT NULL DEFAULT 0`) } catch { /* already exists */ }
     try { _db.exec(`ALTER TABLE movies ADD COLUMN release_date TEXT NOT NULL DEFAULT ''`) } catch { /* already exists */ }
     try { _db.exec(`ALTER TABLE movies ADD COLUMN digital_release_date TEXT NOT NULL DEFAULT ''`) } catch { /* already exists */ }
+    try { _db.exec(`ALTER TABLE music_meta_tracks ADD COLUMN youtube_id TEXT NOT NULL DEFAULT ''`) } catch { /* already exists */ }
+    try { _db.exec(`ALTER TABLE music_meta_tracks ADD COLUMN youtube_resolved_at TEXT NOT NULL DEFAULT ''`) } catch { /* already exists */ }
     migrateAppUserRoles(_db)
     migrateLegacyUserData(_db)
   }
@@ -371,6 +585,72 @@ function row2appUser(r: Record<string, unknown>): AppUser {
     maxRating: effectiveMaxRatingForRole(role, (r.max_rating as string) ?? 'unrestricted'),
     createdAt: (r.created_at as string) ?? '',
     updatedAt: (r.updated_at as string) ?? '',
+  }
+}
+
+function row2musicRelease(r: Record<string, unknown>): MusicRelease {
+  return {
+    hash:       r.hash as string,
+    title:      r.title as string,
+    artist:     (r.artist as string) ?? '',
+    album:      (r.album as string) ?? '',
+    year:       (r.year as number) ?? 0,
+    bytes:      (r.bytes as number) ?? 0,
+    seeders:    (r.seeders as number) ?? 0,
+    category:   (r.category as string) ?? '',
+    resolvedAt: (r.resolved_at as string) ?? '',
+    lastSeenAt: (r.last_seen_at as string) ?? '',
+  }
+}
+
+function row2musicTrack(r: Record<string, unknown>): MusicTrack {
+  return {
+    id:           r.id as string,
+    releaseHash:  r.release_hash as string,
+    fileIdx:      (r.file_idx as number) ?? 0,
+    filePath:     (r.file_path as string) ?? '',
+    title:        r.title as string,
+    trackNum:     (r.track_num as number) ?? 0,
+    artist:       (r.artist as string) ?? '',
+    album:        (r.album as string) ?? '',
+    year:         (r.year as number) ?? 0,
+    bytes:        (r.bytes as number) ?? 0,
+    durationSecs: (r.duration_secs as number) ?? 0,
+    ext:          (r.ext as string) ?? '',
+    createdAt:    (r.created_at as string) ?? '',
+  }
+}
+
+function row2musicMetaAlbum(r: Record<string, unknown>): MusicMetaAlbum {
+  return {
+    id:           r.id as string,
+    source:       r.source as string,
+    sourceId:     r.source_id as string,
+    name:         r.name as string,
+    artist:       (r.artist as string) ?? '',
+    year:         (r.year as number) ?? 0,
+    artworkUrl:   (r.artwork_url as string) ?? '',
+    trackCount:   (r.track_count as number) ?? 0,
+    durationSecs: (r.duration_secs as number) ?? 0,
+    updatedAt:    (r.updated_at as string) ?? '',
+  }
+}
+
+function row2musicMetaTrack(r: Record<string, unknown>): MusicMetaTrack {
+  return {
+    id:                r.id as string,
+    albumId:           r.album_id as string,
+    sourceTrackId:     r.source_track_id as string,
+    title:             r.title as string,
+    artist:            (r.artist as string) ?? '',
+    album:             (r.album as string) ?? '',
+    trackNum:          (r.track_num as number) ?? 0,
+    discNum:           (r.disc_num as number) ?? 0,
+    durationSecs:      (r.duration_secs as number) ?? 0,
+    artworkUrl:        (r.artwork_url as string) ?? '',
+    youtubeId:         (r.youtube_id as string) ?? '',
+    youtubeResolvedAt: (r.youtube_resolved_at as string) ?? '',
+    updatedAt:         (r.updated_at as string) ?? '',
   }
 }
 
@@ -1022,6 +1302,206 @@ export function setSetting(key: string, value: string): void {
 export function getAllSettings(): Record<string, string> {
   const rows = getDb().prepare(`SELECT key, value FROM app_settings`).all() as { key: string; value: string }[]
   return Object.fromEntries(rows.map(r => [r.key, r.value]))
+}
+
+// ── Music catalog ─────────────────────────────────────────────────────────────
+
+export function upsertMusicRelease(release: Omit<MusicRelease, 'lastSeenAt'> & { lastSeenAt?: string }): void {
+  getDb().prepare(`
+    INSERT INTO music_releases (hash, title, artist, album, year, bytes, seeders, category, resolved_at, last_seen_at)
+    VALUES (@hash, @title, @artist, @album, @year, @bytes, @seeders, @category, @resolvedAt, COALESCE(NULLIF(@lastSeenAt, ''), strftime('%Y-%m-%dT%H:%M:%SZ','now')))
+    ON CONFLICT(hash) DO UPDATE SET
+      title = excluded.title,
+      artist = COALESCE(NULLIF(excluded.artist, ''), music_releases.artist),
+      album = COALESCE(NULLIF(excluded.album, ''), music_releases.album),
+      year = CASE WHEN excluded.year > 0 THEN excluded.year ELSE music_releases.year END,
+      bytes = CASE WHEN excluded.bytes > 0 THEN excluded.bytes ELSE music_releases.bytes END,
+      seeders = excluded.seeders,
+      category = COALESCE(NULLIF(excluded.category, ''), music_releases.category),
+      resolved_at = COALESCE(NULLIF(excluded.resolved_at, ''), music_releases.resolved_at),
+      last_seen_at = excluded.last_seen_at
+  `).run({
+    ...release,
+    lastSeenAt: release.lastSeenAt ?? '',
+  })
+}
+
+export function getMusicRelease(hash: string): MusicRelease | null {
+  const row = getDb().prepare(`
+    SELECT *
+    FROM music_releases
+    WHERE hash = ?
+  `).get(hash.toLowerCase()) as Record<string, unknown> | undefined
+  return row ? row2musicRelease(row) : null
+}
+
+export function replaceMusicTracks(releaseHash: string, tracks: Array<Omit<MusicTrack, 'createdAt'>>): void {
+  const db = getDb()
+  db.transaction(() => {
+    db.prepare(`DELETE FROM music_tracks WHERE release_hash = ?`).run(releaseHash)
+    const insert = db.prepare(`
+      INSERT INTO music_tracks (id, release_hash, file_idx, file_path, title, track_num, artist, album, year, bytes, duration_secs, ext)
+      VALUES (@id, @releaseHash, @fileIdx, @filePath, @title, @trackNum, @artist, @album, @year, @bytes, @durationSecs, @ext)
+    `)
+    for (const track of tracks) insert.run(track)
+  })()
+}
+
+export function getMusicTracksForRelease(releaseHash: string): MusicTrack[] {
+  const rows = getDb().prepare(`
+    SELECT *
+    FROM music_tracks
+    WHERE release_hash = ?
+    ORDER BY track_num ASC, title COLLATE NOCASE ASC
+  `).all(releaseHash.toLowerCase()) as Record<string, unknown>[]
+  return rows.map(row2musicTrack)
+}
+
+export function searchPlayableMusicReleases(query: string, limit = 25): Array<MusicRelease & { songCount: number; durationSecs: number }> {
+  const pattern = `%${query.trim()}%`
+  if (!query.trim()) return []
+  const rows = getDb().prepare(`
+    SELECT
+      r.*,
+      COUNT(t.id) AS song_count,
+      COALESCE(SUM(t.duration_secs), 0) AS duration_secs
+    FROM music_releases r
+    JOIN music_tracks t ON t.release_hash = r.hash
+    WHERE r.artist LIKE ? COLLATE NOCASE
+       OR r.album LIKE ? COLLATE NOCASE
+       OR r.title LIKE ? COLLATE NOCASE
+    GROUP BY r.hash
+    ORDER BY r.last_seen_at DESC
+    LIMIT ?
+  `).all(pattern, pattern, pattern, limit) as Array<Record<string, unknown> & { song_count: number; duration_secs: number }>
+  return rows.map(row => ({
+    ...row2musicRelease(row),
+    songCount: row.song_count ?? 0,
+    durationSecs: row.duration_secs ?? 0,
+  }))
+}
+
+export function replaceMusicCandidates(queryKey: string, releaseHashes: string[]): void {
+  const db = getDb()
+  db.transaction(() => {
+    db.prepare(`DELETE FROM music_candidates WHERE query_key = ?`).run(queryKey)
+    const insert = db.prepare(`
+      INSERT INTO music_candidates (id, query_key, release_hash, rank)
+      VALUES (@id, @queryKey, @releaseHash, @rank)
+      ON CONFLICT(query_key, release_hash) DO UPDATE SET
+        rank = excluded.rank,
+        created_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+    `)
+    releaseHashes.forEach((releaseHash, rank) => {
+      insert.run({
+        id: `${queryKey}:${releaseHash}`,
+        queryKey,
+        releaseHash,
+        rank,
+      })
+    })
+  })()
+}
+
+export function listMusicCandidateReleases(queryKey: string, limit = 25): MusicRelease[] {
+  const rows = getDb().prepare(`
+    SELECT r.*
+    FROM music_candidates c
+    JOIN music_releases r ON r.hash = c.release_hash
+    WHERE c.query_key = ?
+    ORDER BY c.rank ASC
+    LIMIT ?
+  `).all(queryKey, limit) as Record<string, unknown>[]
+  return rows.map(row2musicRelease)
+}
+
+export function upsertMusicMetaAlbum(album: Omit<MusicMetaAlbum, 'updatedAt'> & { updatedAt?: string }): void {
+  getDb().prepare(`
+    INSERT INTO music_meta_albums (id, source, source_id, name, artist, year, artwork_url, track_count, duration_secs, updated_at)
+    VALUES (@id, @source, @sourceId, @name, @artist, @year, @artworkUrl, @trackCount, @durationSecs, COALESCE(NULLIF(@updatedAt, ''), strftime('%Y-%m-%dT%H:%M:%SZ','now')))
+    ON CONFLICT(id) DO UPDATE SET
+      source = excluded.source,
+      source_id = excluded.source_id,
+      name = excluded.name,
+      artist = excluded.artist,
+      year = excluded.year,
+      artwork_url = excluded.artwork_url,
+      track_count = excluded.track_count,
+      duration_secs = excluded.duration_secs,
+      updated_at = excluded.updated_at
+  `).run({
+    ...album,
+    updatedAt: album.updatedAt ?? '',
+  })
+}
+
+export function getMusicMetaAlbum(id: string): MusicMetaAlbum | null {
+  const row = getDb().prepare(`
+    SELECT *
+    FROM music_meta_albums
+    WHERE id = ?
+  `).get(id) as Record<string, unknown> | undefined
+  return row ? row2musicMetaAlbum(row) : null
+}
+
+export function replaceMusicMetaTracks(albumId: string, tracks: Array<Omit<MusicMetaTrack, 'updatedAt' | 'youtubeId' | 'youtubeResolvedAt'> & { youtubeId?: string; youtubeResolvedAt?: string; updatedAt?: string }>): void {
+  const db = getDb()
+  db.transaction(() => {
+    db.prepare(`DELETE FROM music_meta_tracks WHERE album_id = ?`).run(albumId)
+    const insert = db.prepare(`
+      INSERT INTO music_meta_tracks (id, album_id, source_track_id, title, artist, album, track_num, disc_num, duration_secs, artwork_url, youtube_id, youtube_resolved_at, updated_at)
+      VALUES (@id, @albumId, @sourceTrackId, @title, @artist, @album, @trackNum, @discNum, @durationSecs, @artworkUrl, @youtubeId, @youtubeResolvedAt, COALESCE(NULLIF(@updatedAt, ''), strftime('%Y-%m-%dT%H:%M:%SZ','now')))
+      ON CONFLICT(id) DO UPDATE SET
+        album_id = excluded.album_id,
+        source_track_id = excluded.source_track_id,
+        title = excluded.title,
+        artist = excluded.artist,
+        album = excluded.album,
+        track_num = excluded.track_num,
+        disc_num = excluded.disc_num,
+        duration_secs = excluded.duration_secs,
+        artwork_url = excluded.artwork_url,
+        youtube_id = COALESCE(NULLIF(music_meta_tracks.youtube_id, ''), excluded.youtube_id),
+        youtube_resolved_at = COALESCE(NULLIF(music_meta_tracks.youtube_resolved_at, ''), excluded.youtube_resolved_at),
+        updated_at = excluded.updated_at
+    `)
+    for (const track of tracks) {
+      insert.run({
+        ...track,
+        youtubeId: track.youtubeId ?? '',
+        youtubeResolvedAt: track.youtubeResolvedAt ?? '',
+        updatedAt: track.updatedAt ?? '',
+      })
+    }
+  })()
+}
+
+export function getMusicMetaTrack(id: string): MusicMetaTrack | null {
+  const row = getDb().prepare(`
+    SELECT *
+    FROM music_meta_tracks
+    WHERE id = ?
+  `).get(id) as Record<string, unknown> | undefined
+  return row ? row2musicMetaTrack(row) : null
+}
+
+export function getMusicMetaTracksForAlbum(albumId: string): MusicMetaTrack[] {
+  const rows = getDb().prepare(`
+    SELECT *
+    FROM music_meta_tracks
+    WHERE album_id = ?
+    ORDER BY disc_num ASC, track_num ASC, title COLLATE NOCASE ASC
+  `).all(albumId) as Record<string, unknown>[]
+  return rows.map(row2musicMetaTrack)
+}
+
+export function setMusicMetaTrackYoutubeId(id: string, youtubeId: string): void {
+  getDb().prepare(`
+    UPDATE music_meta_tracks
+    SET youtube_id = ?,
+        youtube_resolved_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+    WHERE id = ?
+  `).run(youtubeId, id)
 }
 
 // ── App users ────────────────────────────────────────────────────────────────
@@ -1758,4 +2238,143 @@ export function markUnplayed(itemId: string, userId = DEFAULT_ADMIN_USER_ID): vo
       played         = 0,
       position_ticks = 0
   `).run(userId, itemId)
+}
+
+
+// ── AbsBook helpers ────────────────────────────────────────────────────────────
+
+function row2absBook(r: Record<string, unknown>): AbsBook {
+  return {
+    id:             r.id as string,
+    title:          r.title as string,
+    author:         (r.author as string) ?? '',
+    narrator:       (r.narrator as string) ?? '',
+    series:         (r.series as string) ?? '',
+    seriesSequence: (r.series_sequence as string) ?? '',
+    description:    (r.description as string) ?? '',
+    coverPath:      (r.cover_path as string) ?? '',
+    durationSecs:   (r.duration_secs as number) ?? 0,
+    publishedYear:  (r.published_year as string) ?? '',
+    genres:         (r.genres as string) ?? '[]',
+    libraryId:      (r.library_id as string) ?? '',
+    syncedAt:       (r.synced_at as string) ?? '',
+  }
+}
+
+export function upsertAbsBook(book: Omit<AbsBook, 'syncedAt'>): void {
+  getDb().prepare(`
+    INSERT INTO abs_books (id, title, author, narrator, series, series_sequence, description, cover_path, duration_secs, published_year, genres, library_id, synced_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+    ON CONFLICT(id) DO UPDATE SET
+      title           = excluded.title,
+      author          = excluded.author,
+      narrator        = excluded.narrator,
+      series          = excluded.series,
+      series_sequence = excluded.series_sequence,
+      description     = excluded.description,
+      cover_path      = excluded.cover_path,
+      duration_secs   = excluded.duration_secs,
+      published_year  = excluded.published_year,
+      genres          = excluded.genres,
+      library_id      = excluded.library_id,
+      synced_at       = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+  `).run(
+    book.id, book.title, book.author, book.narrator, book.series,
+    book.seriesSequence, book.description, book.coverPath,
+    book.durationSecs, book.publishedYear, book.genres, book.libraryId,
+  )
+}
+
+export function listAbsBooks(opts: { search?: string; sortBy?: string; sortOrder?: string; limit?: number; offset?: number } = {}): AbsBook[] {
+  const { search, sortBy = 'title', sortOrder = 'ASC', limit = 200, offset = 0 } = opts
+  const orderCol = sortBy === 'author' ? 'author' : sortBy === 'syncedAt' ? 'synced_at' : 'title'
+  const dir = sortOrder === 'DESC' ? 'DESC' : 'ASC'
+  if (search) {
+    const like = `%${search}%`
+    const rows = getDb().prepare(`
+      SELECT * FROM abs_books
+      WHERE title LIKE ? OR author LIKE ? OR series LIKE ?
+      ORDER BY ${orderCol} ${dir}
+      LIMIT ? OFFSET ?
+    `).all(like, like, like, limit, offset) as Record<string, unknown>[]
+    return rows.map(row2absBook)
+  }
+  const rows = getDb().prepare(`
+    SELECT * FROM abs_books ORDER BY ${orderCol} ${dir} LIMIT ? OFFSET ?
+  `).all(limit, offset) as Record<string, unknown>[]
+  return rows.map(row2absBook)
+}
+
+export function countAbsBooks(): number {
+  const row = getDb().prepare(`SELECT COUNT(*) AS n FROM abs_books`).get() as { n: number }
+  return row.n
+}
+
+export function deleteAbsBooksNotInSet(ids: Set<string>): number {
+  if (!ids.size) {
+    const r = getDb().prepare(`DELETE FROM abs_books`).run()
+    return r.changes
+  }
+  const placeholders = [...ids].map(() => '?').join(',')
+  const r = getDb().prepare(`DELETE FROM abs_books WHERE id NOT IN (${placeholders})`).run([...ids])
+  return r.changes
+}
+
+// ── BookRequest helpers ────────────────────────────────────────────────────────
+
+function row2bookRequest(r: Record<string, unknown>): BookRequest {
+  return {
+    id:           r.id as number,
+    query:        r.query as string,
+    status:       (r.status as BookRequestStatus) ?? 'pending',
+    indexer:      (r.indexer as string) ?? '',
+    resultTitle:  (r.result_title as string) ?? '',
+    torrentHash:  (r.torrent_hash as string) ?? '',
+    torrentUrl:   (r.torrent_url as string) ?? '',
+    magnetUrl:    (r.magnet_url as string) ?? '',
+    downloadPath: (r.download_path as string) ?? '',
+    error:        (r.error as string) ?? '',
+    requestedBy:  (r.requested_by as string) ?? '',
+    createdAt:    (r.created_at as string) ?? '',
+    updatedAt:    (r.updated_at as string) ?? '',
+  }
+}
+
+export function createBookRequest(req: {
+  query: string; indexer: string; resultTitle: string;
+  torrentHash: string; torrentUrl: string; magnetUrl: string;
+  requestedBy: string;
+}): BookRequest {
+  const now = new Date().toISOString()
+  const result = getDb().prepare(`
+    INSERT INTO book_requests (query, status, indexer, result_title, torrent_hash, torrent_url, magnet_url, requested_by, created_at, updated_at)
+    VALUES (?, 'downloading', ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(req.query, req.indexer, req.resultTitle, req.torrentHash, req.torrentUrl, req.magnetUrl, req.requestedBy, now, now)
+  return getBookRequestById(result.lastInsertRowid as number)!
+}
+
+export function getBookRequestById(id: number): BookRequest | null {
+  const row = getDb().prepare(`SELECT * FROM book_requests WHERE id = ?`).get(id) as Record<string, unknown> | undefined
+  return row ? row2bookRequest(row) : null
+}
+
+export function updateBookRequestStatus(id: number, status: BookRequestStatus, extra: { downloadPath?: string; error?: string } = {}): void {
+  const now = new Date().toISOString()
+  getDb().prepare(`
+    UPDATE book_requests
+    SET status = ?, download_path = COALESCE(?, download_path), error = COALESCE(?, error), updated_at = ?
+    WHERE id = ?
+  `).run(status, extra.downloadPath ?? null, extra.error ?? null, now, id)
+}
+
+export function listBookRequests(limit = 100, offset = 0): BookRequest[] {
+  const rows = getDb().prepare(`
+    SELECT * FROM book_requests ORDER BY created_at DESC LIMIT ? OFFSET ?
+  `).all(limit, offset) as Record<string, unknown>[]
+  return rows.map(row2bookRequest)
+}
+
+export function deleteBookRequest(id: number): boolean {
+  const info = getDb().prepare(`DELETE FROM book_requests WHERE id = ?`).run(id)
+  return info.changes > 0
 }

@@ -51,8 +51,8 @@ function hasUsableUrl(s: Stream): boolean {
 
 function cachedScore(s: Stream): number {
   const text = streamText(s)
-  if (/\[rd\+\]|\[rd ⚡\]|\[rd⚡\]|\brd\+\b|⚡|cached/.test(text)) return 2
-  if (/\[rd\]/.test(text)) return 1
+  if (/\[rd\+\]|\[rd ⚡\]|\[rd⚡\]|\brd\+\b|\[tb\+\]|\[tb ⚡\]|\[tb⚡\]|\btb\+\b|⚡|cached/.test(text)) return 2
+  if (/\[rd\]|\[tb\]/.test(text)) return 1
   return 0
 }
 
@@ -373,8 +373,35 @@ export async function fetchRankedEpisodeStreams(
 export function extractHashFromStreamUrl(url?: string): string | null {
   if (!url) return null
   if (url.startsWith('magnet:')) return normalizeInfoHash(url)
-  const m = url.match(/\/([0-9a-f]{40})(?:\/|$)/i)
-  return m ? m[1].toLowerCase() : null
+  try {
+    const parsed = new URL(url)
+    const segments = parsed.pathname.split('/').filter(Boolean)
+    const resolveIndex = segments.findIndex(segment => segment.toLowerCase() === 'resolve')
+    if (resolveIndex >= 0) {
+      for (const segment of segments.slice(resolveIndex + 1)) {
+        const hash = normalizeInfoHash(decodeURIComponent(segment))
+        if (hash) return hash
+      }
+    }
+
+    const playbackIndex = segments.findIndex(segment => segment.toLowerCase() === 'playback')
+    if (playbackIndex >= 0) {
+      for (const segment of segments.slice(playbackIndex + 1)) {
+        const hash = normalizeInfoHash(decodeURIComponent(segment))
+        if (hash) return hash
+      }
+    }
+
+    for (let i = 0; i < segments.length - 1; i += 1) {
+      const provider = segments[i].toLowerCase()
+      if (provider !== 'tb' && provider !== 'torbox' && provider !== 'rd' && provider !== 'realdebrid') continue
+      const hash = normalizeInfoHash(decodeURIComponent(segments[i + 1]))
+      if (hash) return hash
+    }
+    return null
+  } catch {
+    return null
+  }
 }
 
 function normalizeInfoHash(value: unknown): string | null {

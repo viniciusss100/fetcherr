@@ -61,7 +61,7 @@
     <div class="field">
       <label for="sootioUrl">URL</label>
       <input id="sootioUrl" type="url" placeholder="https://your-aiostreams.example.com">
-      <div class="field-note">Optional legacy fallback for stream lookups. You can paste the full AIOStreams <code>manifest.json</code> URL. Provider stream URLs must include a usable torrent hash so Fetcherr can resolve playback through Real-Debrid.</div>
+      <div class="field-note">Optional legacy fallback for stream lookups. You can paste the full AIOStreams <code>manifest.json</code> URL. Hash-backed streams are resolved through configured debrid providers; TorBox can also use provider direct playback URLs.</div>
     </div>
     <div class="field">
       <label for="streamProviderList">Direct Stream Providers</label>
@@ -69,7 +69,7 @@
       <div class="provider-actions">
         <button type="button" class="btn btn-sm" onclick="addProviderRow()">+ Add Provider</button>
       </div>
-      <div class="field-note">Optional. Query provider base URLs directly and rank the results. Paste one full manifest or base URL per line. Providers that only return proxy URLs and do not expose a torrent hash will not be playable by Fetcherr.</div>
+      <div class="field-note">Optional. Query provider base URLs directly and rank the results. Paste one full manifest or base URL per line.</div>
     </div>
     <div class="field">
       <label for="englishStreamMode">English Audio</label>
@@ -79,6 +79,15 @@
         <option value="off">Do not rank by English markers</option>
       </select>
       <div class="field-note">Prefer uses provider metadata as a quality tie-breaker. Require verifies neutral probeable files with ffprobe before playback.</div>
+    </div>
+    <div class="field">
+      <label for="directPlaybackMode">Direct Playback URLs</label>
+      <select id="directPlaybackMode">
+        <option value="torrentsOnly">Torrent-backed only</option>
+        <option value="all">Allow all direct URLs</option>
+        <option value="off">Disabled</option>
+      </select>
+      <div class="field-note">Used only with TorBox when a provider returns a playable URL instead of a torrent hash. Allow all includes Usenet-backed URLs for accounts that support them.</div>
     </div>
   </section>
 
@@ -91,6 +100,19 @@
         <input id="rdApiKey" type="password" placeholder="Enter your Real-Debrid API key" oninput="onApiKeyInput('rd')">
         <button id="rdValidateBtn" class="btn btn-sm" onclick="validateRD()" hidden>Validate</button>
       </div>
+    </div>
+  </section>
+
+  <!-- TorBox -->
+  <section class="section">
+    <div class="section-title">TorBox <span class="optional-tag">Optional</span> <span id="tbConfigState" class="config-state" hidden></span></div>
+    <div class="field">
+      <label for="torBoxApiKey">API Key</label>
+      <div class="input-row">
+        <input id="torBoxApiKey" type="password" placeholder="Enter your TorBox API key" oninput="onApiKeyInput('tb')">
+        <button id="tbValidateBtn" class="btn btn-sm" onclick="validateTorBox()" hidden>Validate</button>
+      </div>
+      <div class="field-note">Optional second debrid provider. Used as a fallback when Real-Debrid does not have a stream cached, or as the primary provider if Real-Debrid is not configured.</div>
     </div>
   </section>
 
@@ -327,6 +349,7 @@
   let traktAuthPollId = null
   let traktAuthTimeoutId = null
   let hasStoredRdApiKey = false
+  let hasStoredTorBoxApiKey = false
   let hasStoredTmdbApiKey = false
   let hasStoredTvdbApiKey = false
   let hasStoredTraktClientSecret = false
@@ -460,6 +483,13 @@
       label: 'Real-Debrid',
       hasStored: () => hasStoredRdApiKey,
     },
+    tb: {
+      inputId: 'torBoxApiKey',
+      buttonId: 'tbValidateBtn',
+      badgeId: 'tbConfigState',
+      label: 'TorBox',
+      hasStored: () => hasStoredTorBoxApiKey,
+    },
     tmdb: {
       inputId: 'tmdbApiKey',
       buttonId: 'tmdbValidateBtn',
@@ -530,6 +560,7 @@
     if (!res.ok) return
     const d = await res.json()
     hasStoredRdApiKey = !!d.hasRdApiKey
+    hasStoredTorBoxApiKey = !!d.hasTorBoxApiKey
     hasStoredTmdbApiKey = !!d.hasTmdbApiKey
     hasStoredTvdbApiKey = !!d.hasTvdbApiKey
     hasStoredTraktClientSecret = !!d.hasTraktClientSecret
@@ -537,7 +568,9 @@
     document.getElementById('sootioUrl').value         = d.sootioUrl         || ''
     renderProviderRows((d.streamProviderUrls || '').split('\n').map(v => v.trim()).filter(Boolean))
     document.getElementById('englishStreamMode').value = d.englishStreamMode || 'prefer'
+    document.getElementById('directPlaybackMode').value = d.directPlaybackMode || 'torrentsOnly'
     setSecretPlaceholder('rdApiKey', hasStoredRdApiKey, 'Enter your Real-Debrid API key')
+    setSecretPlaceholder('torBoxApiKey', hasStoredTorBoxApiKey, 'Enter your TorBox API key')
     setSecretPlaceholder('tmdbApiKey', hasStoredTmdbApiKey, 'Enter your TMDB API key')
     setSecretPlaceholder('tvdbApiKey', hasStoredTvdbApiKey, 'Enter your TVDB API key')
     document.getElementById('serverUrl').value         = d.serverUrl         || ''
@@ -557,6 +590,7 @@
     renderUsers()
 
     setApiStoredStatus('rd')
+    setApiStoredStatus('tb')
     setApiStoredStatus('tmdb')
     setApiStoredStatus('tvdb')
     setMdblistStoredStatus()
@@ -831,6 +865,10 @@
     await validateApiKey('rd')
   }
 
+  async function validateTorBox() {
+    await validateApiKey('tb')
+  }
+
   async function validateTMDB() {
     await validateApiKey('tmdb')
   }
@@ -901,6 +939,7 @@
 
   async function saveSettings() {
     const rdApiKey = document.getElementById('rdApiKey').value
+    const torBoxApiKey = document.getElementById('torBoxApiKey').value
     const tmdbApiKey = document.getElementById('tmdbApiKey').value
     const tvdbApiKey = document.getElementById('tvdbApiKey').value
     const traktClientSecret = document.getElementById('traktClientSecret').value
@@ -909,6 +948,7 @@
       sootioUrl:         document.getElementById('sootioUrl').value,
       streamProviderUrls: collectProviderUrls().join('\n'),
       englishStreamMode: document.getElementById('englishStreamMode').value,
+      directPlaybackMode: document.getElementById('directPlaybackMode').value,
       serverUrl:         document.getElementById('serverUrl').value,
       showAddDefaultMode: document.getElementById('showAddDefaultMode').value,
       movieReleaseMode: document.getElementById('movieReleaseMode').value,
@@ -920,6 +960,7 @@
       traktLists:        selectedTraktLists,
       mdblistLists: document.getElementById('mdblistLists').value,
       ...(rdApiKey ? { rdApiKey } : {}),
+      ...(torBoxApiKey ? { torBoxApiKey } : {}),
       ...(tmdbApiKey ? { tmdbApiKey } : {}),
       ...(tvdbApiKey ? { tvdbApiKey } : {}),
       ...(traktClientSecret ? { traktClientSecret } : {}),

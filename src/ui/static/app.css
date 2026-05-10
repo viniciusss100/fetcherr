@@ -198,6 +198,40 @@ select:disabled {
   gap: 6px;
 }
 
+.app-switcher {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 1;
+  padding: 0 8px;
+}
+
+.app-switcher-item {
+  display: flex;
+  align-items: center;
+  padding: 5px 12px;
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: color .15s, background .15s;
+  white-space: nowrap;
+}
+
+.app-switcher-item:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, .05);
+}
+
+.app-switcher-item.active {
+  color: var(--text);
+  background: rgba(143, 184, 255, .1);
+}
+
+.stat.books .stat-value  { color: var(--amber); }
+.stat.requests .stat-value { color: var(--violet); }
+
 .page-header {
   display: flex;
   align-items: flex-end;
