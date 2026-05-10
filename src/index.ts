@@ -16,9 +16,6 @@ import { ensureShowSeasonsCached, refreshShowMetadataIfNeeded, refreshMovieMetad
 import { getSessionUser, getTokenFromCookie, isUiAuthConfigured, isValidSession } from './ui/auth.js'
 import { verifySignedPlaybackPath } from './play-auth.js'
 import { hasEnglishAudioMarker, hasNonEnglishAudioMarker } from './streamLanguage.js'
-import { subsonicRoutes } from './music/subsonic.js'
-import { bookRoutes } from './books/routes.js'
-import { syncAbsLibrary } from './audiobookshelf.js'
 
 const app = Fastify({
   logger: { level: 'info' },
@@ -799,8 +796,6 @@ app.get('/play/:imdbId/:season/:episode', async (req, reply) => {
 await app.register(jellyfinRoutes, { prewarmPlayback })
 await app.register(jellyfinRoutes, { prefix: '/emby', prewarmPlayback })
 await app.register(uiRoutes)
-await app.register(subsonicRoutes)
-await app.register(bookRoutes)
 
 // ── Trakt auth ────────────────────────────────────────────────────────────────
 
@@ -924,10 +919,6 @@ async function runSyncInternal() {
 
   markSyncComplete()
 
-  // Sync AudioBookShelf library (best-effort)
-  if (config.absUrl && config.absApiKey) {
-    await syncAbsLibrary().catch(err => app.log.error(`ABS sync failed: ${err}`))
-  }
 }
 
 function runSync(): Promise<void> {
