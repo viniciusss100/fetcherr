@@ -116,9 +116,9 @@ function isApiKeyService(value: unknown): value is ApiKeyService {
 }
 
 function configuredApiKeyForService(service: ApiKeyService): string {
-  if (service === 'rd') return config.rdApiKey
+  if (service === 'rd') return getSetting('rdApiKey') || config.rdApiKey
   if (service === 'tmdb') return config.tmdbApiKey
-  if (service === 'tb') return config.torBoxApiKey
+  if (service === 'tb') return getSetting('torBoxApiKey') || config.torBoxApiKey
   return config.tvdbApiKey
 }
 
@@ -715,9 +715,7 @@ export async function uiRoutes(app: FastifyInstance) {
       hasSootioUrl:      !!getSetting('sootioUrl'),
       hasRdApiKey:       !!getSetting('rdApiKey'),
       hasTorBoxApiKey:   !!getSetting('torBoxApiKey'),
-      activeDebridProvider: getSetting('activeDebridProvider') === 'tb' && (config.torBoxApiKey || !config.rdApiKey)
-        ? 'tb'
-        : 'rd',
+      activeDebridProvider: getSetting('activeDebridProvider') === 'tb' ? 'tb' : 'rd',
       hasTmdbApiKey:     !!getSetting('tmdbApiKey'),
       hasTvdbApiKey:     !!getSetting('tvdbApiKey'),
       hasTraktClientSecret: !!getSetting('traktClientSecret'),
@@ -798,27 +796,16 @@ export async function uiRoutes(app: FastifyInstance) {
     }
     const activeDebridProvider = body.activeDebridProvider === 'tb' ? 'tb' : 'rd'
     setSetting('activeDebridProvider', activeDebridProvider)
-    if (activeDebridProvider === 'rd') {
-      if (typeof body.rdApiKey === 'string') {
-        const val = body.rdApiKey.trim()
-        setSetting('rdApiKey', val)
-        config.rdApiKey = val
-      } else {
-        config.rdApiKey = getSetting('rdApiKey') || ''
-      }
-      setSetting('torBoxApiKey', '')
-      config.torBoxApiKey = ''
-    } else {
-      if (typeof body.torBoxApiKey === 'string') {
-        const val = body.torBoxApiKey.trim()
-        setSetting('torBoxApiKey', val)
-        config.torBoxApiKey = val
-      } else {
-        config.torBoxApiKey = getSetting('torBoxApiKey') || ''
-      }
-      setSetting('rdApiKey', '')
-      config.rdApiKey = ''
+    if (typeof body.rdApiKey === 'string') {
+      setSetting('rdApiKey', body.rdApiKey.trim())
     }
+    if (typeof body.torBoxApiKey === 'string') {
+      setSetting('torBoxApiKey', body.torBoxApiKey.trim())
+    }
+    const storedRdApiKey = getSetting('rdApiKey') || ''
+    const storedTorBoxApiKey = getSetting('torBoxApiKey') || ''
+    config.rdApiKey = activeDebridProvider === 'rd' ? storedRdApiKey : ''
+    config.torBoxApiKey = activeDebridProvider === 'tb' ? storedTorBoxApiKey : ''
     if (typeof body.streamProviderUrls === 'string') {
       const urls = parseStreamProviderUrls(body.streamProviderUrls)
       setSetting('streamProviderUrls', urls.join('\n'))
