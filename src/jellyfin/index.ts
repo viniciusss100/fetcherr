@@ -48,6 +48,9 @@ const jellyfinTokens = new Map<string, { userId: string; expiresAt: number }>()
 const loginAttempts = new Map<string, { count: number; resetAt: number }>()
 const proxiedImageCache = new Map<string, { buffer: Buffer; contentType: string; expiresAt: number }>()
 const traktCollectionSummaryCache = new Map<string, { expiresAt: number; summaries: TraktCollectionSummary[] }>()
+type JellyfinRouteOptions = {
+  prewarmPlayback?: (playPath: string, label: string) => void
+}
 type ImageKind = 'poster' | 'backdrop' | 'logo'
 type ImageQuery = {
   tag?: string
@@ -1104,7 +1107,7 @@ function jellyfinUser(user: AppUser) {
 
 // ── Route registration ────────────────────────────────────────────────────────
 
-export async function jellyfinRoutes(app: FastifyInstance) {
+export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOptions = {}) {
 
   function requireJellyfinUser(
     headers: Record<string, string | string[] | undefined>,
@@ -1923,6 +1926,7 @@ export async function jellyfinRoutes(app: FastifyInstance) {
       const playUrl = createSignedPlaybackUrl(buildPlaybackOrigin(req.headers), playPath)
       const label = ep ? ep.name : `S${epRef.seasonNum}E${epRef.episodeNum}`
       app.log.info(`playback: "${show.title}" ${label} → ${playUrl}`)
+      opts.prewarmPlayback?.(playPath, `${show.title} ${label}`)
       return {
         MediaSources: [{
           Id:                   id,
@@ -1960,6 +1964,7 @@ export async function jellyfinRoutes(app: FastifyInstance) {
     const playPath = `/play/${movie.imdbId}`
     const playUrl = createSignedPlaybackUrl(buildPlaybackOrigin(req.headers), playPath)
     app.log.info(`playback: "${movie.title}" → ${playUrl}`)
+    opts.prewarmPlayback?.(playPath, movie.title)
     return {
       MediaSources: [{
         Id:                   id,

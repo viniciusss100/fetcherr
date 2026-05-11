@@ -144,6 +144,7 @@ const failedPlayCache = new Map<string, FailedPlayCacheEntry>()
 type PlayResolution = { url: string; filename?: string; bytes?: number; sourceHash?: string; provider?: string }
 type PlaybackPrewarmEntry = { expiresAt: number; promise: Promise<PlayResolution> }
 const playbackPrewarmCache = new Map<string, PlaybackPrewarmEntry>()
+let activePlaybackPrewarmPath: string | null = null
 
 class PlaybackResolutionError extends Error {
   constructor(
@@ -205,6 +206,35 @@ function getOrCreatePlaybackResolution(
   })
   app.log.info(`play: started resolver for ${label}`)
   return { promise, reused: false }
+}
+
+function prewarmPlayback(playPath: string, label: string): void {
+  cleanupPlaybackPrewarmCache()
+  if (getFailedPlayReason(playPath)) return
+  if (playbackPrewarmCache.has(playPath)) return
+  if (activePlaybackPrewarmPath && activePlaybackPrewarmPath !== playPath) {
+    app.log.info(`prewarm: skipping ${label}, another playback prewarm is active`)
+    return
+  }
+
+  const episodeMatch = playPath.match(/^\/play\/([^/]+)\/(\d+)\/(\d+)$/)
+  const movieMatch = playPath.match(/^\/play\/([^/]+)$/)
+  const resolver = episodeMatch
+    ? () => resolveEpisodePlayback(episodeMatch[1], Number.parseInt(episodeMatch[2], 10), Number.parseInt(episodeMatch[3], 10))
+    : movieMatch
+      ? () => resolveMoviePlayback(movieMatch[1])
+      : null
+  if (!resolver) return
+
+  activePlaybackPrewarmPath = playPath
+  const { promise, reused } = getOrCreatePlaybackResolution(playPath, label, resolver)
+  if (!reused) app.log.info(`prewarm: started for ${label}`)
+  promise
+    .then(resolved => app.log.info(`prewarm: ready for ${label}${resolved.filename ? ` → ${resolved.filename}` : ''}`))
+    .catch(err => app.log.info(`prewarm: ended for ${label}: ${err}`))
+    .finally(() => {
+      if (activePlaybackPrewarmPath === playPath) activePlaybackPrewarmPath = null
+    })
 }
 
 function isNonRetryableRdError(err: ProviderUnavailableError): boolean {
@@ -385,6 +415,10 @@ function isDirectPlaybackUrl(url?: string): url is string {
   }
 }
 
+function resolutionAttemptKey(hash: string, fileHint?: string): string {
+  return `${hash.toLowerCase()}|${(fileHint || '').toLowerCase()}`
+}
+
 function filenameFromDirectPlaybackUrl(url?: string): string | undefined {
   if (!url) return undefined
   try {
@@ -461,6 +495,8 @@ async function resolvePlayableStream(
   if (config.rdApiKey || config.torBoxApiKey) {
     let rdTransientFailures = 0
     let tbTransientFailures = 0
+    const attemptedRdResolutions = new Set<string>()
+    const attemptedTorBoxResolutions = new Set<string>()
     app.log.info(`play: trying ${streams.length} ranked candidate${streams.length === 1 ? '' : 's'} for ${label}`)
     const orderedStreams = streams
       .map((stream, index) => ({ stream, index }))
@@ -538,42 +574,53 @@ async function resolvePlayableStream(
         app.log.info(`play: trying providerOrder=${providerOrder} hash ${hash.slice(0, 8)}… for ${label}`)
         let resolved: ResolvedStream | null = null
         let provider = ''
+        const attemptKey = resolutionAttemptKey(hash, hint)
 
         if (config.rdApiKey) {
-          try {
-            resolved = await resolveStream(hash, hint)
-            provider = 'RD'
-          } catch (rdErr) {
-            if (rdErr instanceof NotCachedError) {
-              app.log.info(`play: hash ${hashLabel}… not cached on RD${config.torBoxApiKey ? ', trying TorBox' : ''}`)
-            } else if (rdErr instanceof ProviderUnavailableError) {
-              rdTransientFailures += 1
-              const retryable = !isNonRetryableRdError(rdErr) && rdTransientFailures < MAX_RD_TRANSIENT_FAILURES
-              if (retryable) {
-                app.log.warn(
-                  `play: RD error for providerOrder=${providerOrder} hash ${hashLabel}…: ${rdErr}; ` +
-                  `trying next candidate (${rdTransientFailures}/${MAX_RD_TRANSIENT_FAILURES})`
-                )
-              } else {
-                app.log.warn(
-                  `play: RD unavailable for ${label} after ${rdTransientFailures} failure${rdTransientFailures === 1 ? '' : 's'}: ${rdErr}` +
-                  (config.torBoxApiKey ? '; falling back to TorBox' : '; not caching playback miss')
-                )
-                if (!config.torBoxApiKey) {
-                  throw new PlaybackResolutionError(
-                    'Real-Debrid unavailable',
-                    503,
-                    { error: 'Real-Debrid unavailable', message: 'Real-Debrid Unavailable' },
+          if (attemptedRdResolutions.has(attemptKey)) {
+            app.log.info(`play: skipping duplicate RD hash ${hashLabel}… for ${label}`)
+          } else {
+            attemptedRdResolutions.add(attemptKey)
+            try {
+              resolved = await resolveStream(hash, hint)
+              provider = 'RD'
+            } catch (rdErr) {
+              if (rdErr instanceof NotCachedError) {
+                app.log.info(`play: hash ${hashLabel}… not cached on RD${config.torBoxApiKey ? ', trying TorBox' : ''}`)
+              } else if (rdErr instanceof ProviderUnavailableError) {
+                rdTransientFailures += 1
+                const retryable = !isNonRetryableRdError(rdErr) && rdTransientFailures < MAX_RD_TRANSIENT_FAILURES
+                if (retryable) {
+                  app.log.warn(
+                    `play: RD error for providerOrder=${providerOrder} hash ${hashLabel}…: ${rdErr}; ` +
+                    `trying next candidate (${rdTransientFailures}/${MAX_RD_TRANSIENT_FAILURES})`
                   )
+                } else {
+                  app.log.warn(
+                    `play: RD unavailable for ${label} after ${rdTransientFailures} failure${rdTransientFailures === 1 ? '' : 's'}: ${rdErr}` +
+                    (config.torBoxApiKey ? '; falling back to TorBox' : '; not caching playback miss')
+                  )
+                  if (!config.torBoxApiKey) {
+                    throw new PlaybackResolutionError(
+                      'Real-Debrid unavailable',
+                      503,
+                      { error: 'Real-Debrid unavailable', message: 'Real-Debrid Unavailable' },
+                    )
+                  }
                 }
+              } else {
+                app.log.warn(`play: hash ${hashLabel}… RD failed: ${rdErr}`)
               }
-            } else {
-              app.log.warn(`play: hash ${hashLabel}… RD failed: ${rdErr}`)
             }
           }
         }
 
         if (!resolved && config.torBoxApiKey) {
+          if (attemptedTorBoxResolutions.has(attemptKey)) {
+            app.log.info(`play: skipping duplicate TorBox hash ${hashLabel}… for ${label}`)
+            continue
+          }
+          attemptedTorBoxResolutions.add(attemptKey)
           try {
             resolved = await tbResolveStream(hash, hint)
             provider = 'TorBox'
@@ -770,8 +817,8 @@ app.get('/play/:imdbId/:season/:episode', async (req, reply) => {
   }
 })
 
-await app.register(jellyfinRoutes)
-await app.register(jellyfinRoutes, { prefix: '/emby' })
+await app.register(jellyfinRoutes, { prewarmPlayback })
+await app.register(jellyfinRoutes, { prefix: '/emby', prewarmPlayback })
 await app.register(uiRoutes)
 
 // ── Trakt auth ────────────────────────────────────────────────────────────────
