@@ -1104,11 +1104,7 @@ function jellyfinUser(user: AppUser) {
 
 // ── Route registration ────────────────────────────────────────────────────────
 
-type JellyfinRouteOptions = {
-  prewarmPlayback?: (playPath: string, label: string) => void
-}
-
-export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOptions = {}) {
+export async function jellyfinRoutes(app: FastifyInstance) {
 
   function requireJellyfinUser(
     headers: Record<string, string | string[] | undefined>,
@@ -1927,7 +1923,6 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
       const playUrl = createSignedPlaybackUrl(buildPlaybackOrigin(req.headers), playPath)
       const label = ep ? ep.name : `S${epRef.seasonNum}E${epRef.episodeNum}`
       app.log.info(`playback: "${show.title}" ${label} → ${playUrl}`)
-      opts.prewarmPlayback?.(playPath, `${show.title} ${label}`)
       return {
         MediaSources: [{
           Id:                   id,
@@ -1965,7 +1960,6 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     const playPath = `/play/${movie.imdbId}`
     const playUrl = createSignedPlaybackUrl(buildPlaybackOrigin(req.headers), playPath)
     app.log.info(`playback: "${movie.title}" → ${playUrl}`)
-    opts.prewarmPlayback?.(playPath, movie.title)
     return {
       MediaSources: [{
         Id:                   id,
@@ -2008,7 +2002,6 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
       if (!show?.imdbId) return reply.code(404).send()
       if (!canUserAccessShow(user, show)) return reply.code(404).send()
       const playPath = `/play/${show.imdbId}/${epRef.seasonNum}/${epRef.episodeNum}`
-      opts.prewarmPlayback?.(playPath, `${show.title} S${epRef.seasonNum}E${epRef.episodeNum}`)
       return reply.redirect(createSignedPlaybackUrl(origin, playPath), 302)
     }
 
@@ -2018,7 +2011,6 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     if (!canUserAccessMovie(user, movie)) return reply.code(404).send()
     if (!isMovieVisibleToLibrary(movie)) return reply.code(409).send({ error: 'Title not yet available', message: 'Not Yet Released' })
     const playPath = `/play/${movie.imdbId}`
-    opts.prewarmPlayback?.(playPath, movie.title)
     return reply.redirect(createSignedPlaybackUrl(origin, playPath), 302)
   })
 }

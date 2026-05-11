@@ -207,21 +207,6 @@ function getOrCreatePlaybackResolution(
   return { promise, reused: false }
 }
 
-function prewarmPlayback(playPath: string, label: string) {
-  if (getFailedPlayReason(playPath)) return
-  const resolver = playbackResolverForPath(playPath)
-  if (!resolver) return
-  const { promise, reused } = getOrCreatePlaybackResolution(playPath, label, resolver)
-  if (reused) {
-    app.log.info(`play: prewarm already active for ${label}`)
-    return
-  }
-  app.log.info(`play: prewarming ${label}`)
-  void promise
-    .then(result => app.log.info(`play: prewarm ready for ${label}${result.filename ? ` → ${result.filename}` : ''}`))
-    .catch(err => app.log.info(`play: prewarm ended for ${label}: ${err}`))
-}
-
 function isNonRetryableRdError(err: ProviderUnavailableError): boolean {
   return err.status === 401 || err.status === 403 || err.status === 429
 }
@@ -714,23 +699,6 @@ async function resolveEpisodePlayback(imdbId: string, season: number, episodeNum
   )
 }
 
-function playbackResolverForPath(playPath: string): (() => Promise<PlayResolution>) | null {
-  const movieMatch = playPath.match(/^\/play\/([^/]+)$/)
-  if (movieMatch) return () => resolveMoviePlayback(movieMatch[1])
-
-  const episodeMatch = playPath.match(/^\/play\/([^/]+)\/(\d+)\/(\d+)$/)
-  if (episodeMatch) {
-    const imdbId = episodeMatch[1]
-    const season = Number.parseInt(episodeMatch[2], 10)
-    const episode = Number.parseInt(episodeMatch[3], 10)
-    if (Number.isFinite(season) && Number.isFinite(episode)) {
-      return () => resolveEpisodePlayback(imdbId, season, episode)
-    }
-  }
-
-  return null
-}
-
 app.get('/play/:imdbId', async (req, reply) => {
   const { imdbId } = req.params as { imdbId: string }
   const query = req.query as { token?: string; expires?: string } | undefined
@@ -751,7 +719,7 @@ app.get('/play/:imdbId', async (req, reply) => {
   app.log.info(`play: resolving stream for ${imdbId}`)
   try {
     const { promise, reused } = getOrCreatePlaybackResolution(playPath, imdbId, () => resolveMoviePlayback(imdbId))
-    if (reused) app.log.info(`play: using prewarmed resolver for ${imdbId}`)
+    if (reused) app.log.info(`play: using in-flight resolver for ${imdbId}`)
     const resolved = await promise
     if (resolved.provider === 'TorBox' && isTorBoxCdnUrl(resolved.url)) return proxyTorBoxStream(resolved, req, reply as never)
     return reply.redirect(resolved.url, 302)
@@ -788,7 +756,7 @@ app.get('/play/:imdbId/:season/:episode', async (req, reply) => {
   try {
     const label = `${imdbId} S${s}E${e}`
     const { promise, reused } = getOrCreatePlaybackResolution(playPath, label, () => resolveEpisodePlayback(imdbId, s, e))
-    if (reused) app.log.info(`play: using prewarmed resolver for ${label}`)
+    if (reused) app.log.info(`play: using in-flight resolver for ${label}`)
     const resolved = await promise
     if (resolved.provider === 'TorBox' && isTorBoxCdnUrl(resolved.url)) return proxyTorBoxStream(resolved, req, reply as never)
     return reply.redirect(resolved.url, 302)
@@ -802,9 +770,8 @@ app.get('/play/:imdbId/:season/:episode', async (req, reply) => {
   }
 })
 
-// Register routes after playback helpers are initialized so Jellyfin can prewarm them.
-await app.register(jellyfinRoutes, { prewarmPlayback })
-await app.register(jellyfinRoutes, { prefix: '/emby', prewarmPlayback })
+await app.register(jellyfinRoutes)
+await app.register(jellyfinRoutes, { prefix: '/emby' })
 await app.register(uiRoutes)
 
 // ── Trakt auth ────────────────────────────────────────────────────────────────
