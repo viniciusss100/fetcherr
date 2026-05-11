@@ -11,15 +11,6 @@ services:
       SERVER_NAME: "${SERVER_NAME:-Fetcherr}"
       SERVER_ID: "${SERVER_ID:-fetcherr-001}"
       SERVER_URL: "${SERVER_URL:-http://localhost:9990}"
-      ABS_URL: "${ABS_URL:-}"
-      ABS_API_KEY: "${ABS_API_KEY:-}"
-      ABS_DOWNLOAD_PATH: "${ABS_DOWNLOAD_PATH:-/audiobooks}"
-      PROWLARR_URL: "${PROWLARR_URL:-}"
-      PROWLARR_API_KEY: "${PROWLARR_API_KEY:-}"
-      QBITTORRENT_URL: "${QBITTORRENT_URL:-}"
-      QBITTORRENT_USERNAME: "${QBITTORRENT_USERNAME:-}"
-      QBITTORRENT_PASSWORD: "${QBITTORRENT_PASSWORD:-}"
       RD_API_KEY: "${RD_API_KEY:-}"
     volumes:
       - ./data:/app/data
-      - /mnt/ext1/audiobooks:/audiobooks

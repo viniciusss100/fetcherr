@@ -72,6 +72,16 @@ getDb()
   if (s.musicAddonUrls != null) config.musicAddonUrls = parseMusicAddonUrls(s.musicAddonUrls)
   if (s.englishStreamMode != null) config.englishStreamMode = parseEnglishStreamMode(s.englishStreamMode)
   if (s.directPlaybackMode != null) config.directPlaybackMode = parseDirectPlaybackMode(s.directPlaybackMode)
+  const activeDebridProvider = s.activeDebridProvider === 'tb'
+    ? 'tb'
+    : config.torBoxApiKey && !config.rdApiKey
+      ? 'tb'
+      : 'rd'
+  if (activeDebridProvider === 'tb') {
+    config.rdApiKey = ''
+  } else {
+    config.torBoxApiKey = ''
+  }
 }
 
 // Wrap Fastify logger so UI log viewer captures it

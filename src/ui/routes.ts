@@ -3,7 +3,7 @@ import { readFileSync, existsSync } from 'fs'
 import { fileURLToPath } from 'url'
 import { join, dirname } from 'path'
 import {
-  listMovies, countMovies, listShows, countShows, countAiredEpisodes, countAbsBooks,
+  listMovies, countMovies, listShows, countShows, countAiredEpisodes,
   addSourceItem, getEffectiveShowMode, getMovieByTmdbId, getShowByTmdbId, getSetting,
   getLatestSeasonNumberForShow, getEpisodesForShow, getMovieEligibleDate, getMovieReleaseModeForLibrary,
   getManualMovieAvailabilityOverride, materializeMovieReleaseModeForExistingLibrary,
@@ -404,7 +404,7 @@ export async function uiRoutes(app: FastifyInstance) {
     ) return
 
     if (!isUiAuthConfigured()) {
-      const isApiRoute = /^\/ui\/(stats|movies|shows|logs-data|settings-data|users-data|search|library|trakt|books)/.test(url)
+      const isApiRoute = /^\/ui\/(stats|movies|shows|logs-data|settings-data|users-data|search|library|trakt)/.test(url)
       if (isApiRoute) {
         return reply.code(503).send({ error: 'Setup required. Create an admin account first.' })
       }
@@ -413,7 +413,7 @@ export async function uiRoutes(app: FastifyInstance) {
 
     const token = getTokenFromCookie(req.headers.cookie)
     if (!token || !isValidSession(token) || !getSessionUser(token)) {
-      const isApiRoute = /^\/ui\/(stats|movies|shows|logs-data|settings-data|users-data|search|library|trakt|books)/.test(url)
+      const isApiRoute = /^\/ui\/(stats|movies|shows|logs-data|settings-data|users-data|search|library|trakt)/.test(url)
       if (isApiRoute) {
         return reply.code(401).send({ error: 'Unauthorized' })
       }
@@ -428,7 +428,6 @@ export async function uiRoutes(app: FastifyInstance) {
   app.get('/apple-touch-icon.png', async (_req, reply) => reply.redirect('/ui/static/fetcherr.svg', 302))
   app.get('/apple-touch-icon-precomposed.png', async (_req, reply) => reply.redirect('/ui/static/fetcherr.svg', 302))
   app.get('/ui/dashboard',  async (_req, reply) => reply.type('text/html').send(html('dashboard.html')))
-  app.get('/ui/books',      async (_req, reply) => reply.type('text/html').send(html('books.html')))
   app.get('/ui/setup',      async (_req, reply) => reply.redirect(isUiAuthConfigured() ? '/ui/settings' : '/ui/setup-admin'))
   app.get('/ui/logs',       async (req, reply) => {
     if (!requireAdmin(req, reply as never)) return
@@ -448,7 +447,6 @@ export async function uiRoutes(app: FastifyInstance) {
       movies,
       shows,
       episodes,
-      books:  countAbsBooks(),
       hidden: user.role === 'admin' ? countHiddenLibraryItems() : 0,
       lastSyncAt,
       nextSyncAt,
@@ -717,6 +715,9 @@ export async function uiRoutes(app: FastifyInstance) {
       hasSootioUrl:      !!getSetting('sootioUrl'),
       hasRdApiKey:       !!getSetting('rdApiKey'),
       hasTorBoxApiKey:   !!getSetting('torBoxApiKey'),
+      activeDebridProvider: getSetting('activeDebridProvider') === 'tb' && (config.torBoxApiKey || !config.rdApiKey)
+        ? 'tb'
+        : 'rd',
       hasTmdbApiKey:     !!getSetting('tmdbApiKey'),
       hasTvdbApiKey:     !!getSetting('tvdbApiKey'),
       hasTraktClientSecret: !!getSetting('traktClientSecret'),
@@ -784,7 +785,7 @@ export async function uiRoutes(app: FastifyInstance) {
     if (!user || user.role !== 'admin') return reply.code(403).send({ error: 'Admin access required' })
     const body = (req.body ?? {}) as Record<string, string | string[] | boolean>
     const editable: (keyof typeof config)[] = [
-      'sootioUrl', 'rdApiKey', 'torBoxApiKey', 'tmdbApiKey', 'tvdbApiKey', 'serverUrl', 'traktClientId', 'traktClientSecret', 'mdblistApiKey',
+      'sootioUrl', 'tmdbApiKey', 'tvdbApiKey', 'serverUrl', 'traktClientId', 'traktClientSecret', 'mdblistApiKey',
     ]
     for (const key of editable) {
       if (typeof body[key] === 'string') {
@@ -794,6 +795,29 @@ export async function uiRoutes(app: FastifyInstance) {
         setSetting(key, val)
         config[key] = val as never
       }
+    }
+    const activeDebridProvider = body.activeDebridProvider === 'tb' ? 'tb' : 'rd'
+    setSetting('activeDebridProvider', activeDebridProvider)
+    if (activeDebridProvider === 'rd') {
+      if (typeof body.rdApiKey === 'string') {
+        const val = body.rdApiKey.trim()
+        setSetting('rdApiKey', val)
+        config.rdApiKey = val
+      } else {
+        config.rdApiKey = getSetting('rdApiKey') || ''
+      }
+      setSetting('torBoxApiKey', '')
+      config.torBoxApiKey = ''
+    } else {
+      if (typeof body.torBoxApiKey === 'string') {
+        const val = body.torBoxApiKey.trim()
+        setSetting('torBoxApiKey', val)
+        config.torBoxApiKey = val
+      } else {
+        config.torBoxApiKey = getSetting('torBoxApiKey') || ''
+      }
+      setSetting('rdApiKey', '')
+      config.rdApiKey = ''
     }
     if (typeof body.streamProviderUrls === 'string') {
       const urls = parseStreamProviderUrls(body.streamProviderUrls)

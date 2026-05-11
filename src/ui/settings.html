@@ -80,39 +80,50 @@
       </select>
       <div class="field-note">Prefer uses provider metadata as a quality tie-breaker. Require verifies neutral probeable files with ffprobe before playback.</div>
     </div>
-    <div class="field">
-      <label for="directPlaybackMode">Direct Playback URLs</label>
-      <select id="directPlaybackMode">
-        <option value="torrentsOnly">Torrent-backed only</option>
-        <option value="all">Allow all direct URLs</option>
-        <option value="off">Disabled</option>
-      </select>
-      <div class="field-note">Used only with TorBox when a provider returns a playable URL instead of a torrent hash. Allow all includes Usenet-backed URLs for accounts that support them.</div>
-    </div>
   </section>
 
-  <!-- Real-Debrid -->
+  <!-- Debrid -->
   <section class="section" id="debrid">
-    <div class="section-title">Real-Debrid <span id="rdConfigState" class="config-state" hidden></span></div>
-    <div class="field">
-      <label for="rdApiKey">API Key</label>
-      <div class="input-row">
-        <input id="rdApiKey" type="password" placeholder="Enter your Real-Debrid API key" oninput="onApiKeyInput('rd')">
-        <button id="rdValidateBtn" class="btn btn-sm" onclick="validateRD()" hidden>Validate</button>
+    <div class="section-title">Debrid</div>
+    <div class="field-note debrid-intro">Choose Real-Debrid or TorBox. Fetcherr saves only the selected provider and clears the other provider on save.</div>
+    <div class="tabs debrid-tabs" role="tablist" aria-label="Debrid provider settings">
+      <button type="button" id="debridTabRd" class="tab active" role="tab" aria-selected="true" aria-controls="debridPanelRd" onclick="setDebridProvider('rd')">
+        Real-Debrid <span id="rdConfigState" class="config-state" hidden></span>
+      </button>
+      <button type="button" id="debridTabTb" class="tab" role="tab" aria-selected="false" aria-controls="debridPanelTb" onclick="setDebridProvider('tb')">
+        TorBox <span id="tbConfigState" class="config-state" hidden></span>
+      </button>
+    </div>
+
+    <div id="debridPanelRd" class="debrid-panel" role="tabpanel" aria-labelledby="debridTabRd">
+      <div class="field">
+        <label for="rdApiKey">Real-Debrid API Key</label>
+        <div class="input-row">
+          <input id="rdApiKey" type="password" placeholder="Enter your Real-Debrid API key" oninput="onApiKeyInput('rd')">
+          <button id="rdValidateBtn" class="btn btn-sm" onclick="validateRD()" hidden>Validate</button>
+        </div>
+        <div class="field-note">Use Real-Debrid as the debrid resolver for cached torrent playback.</div>
       </div>
     </div>
-  </section>
 
-  <!-- TorBox -->
-  <section class="section">
-    <div class="section-title">TorBox <span class="optional-tag">Optional</span> <span id="tbConfigState" class="config-state" hidden></span></div>
-    <div class="field">
-      <label for="torBoxApiKey">API Key</label>
-      <div class="input-row">
-        <input id="torBoxApiKey" type="password" placeholder="Enter your TorBox API key" oninput="onApiKeyInput('tb')">
-        <button id="tbValidateBtn" class="btn btn-sm" onclick="validateTorBox()" hidden>Validate</button>
+    <div id="debridPanelTb" class="debrid-panel" role="tabpanel" aria-labelledby="debridTabTb" hidden>
+      <div class="field">
+        <label for="torBoxApiKey">TorBox API Key</label>
+        <div class="input-row">
+          <input id="torBoxApiKey" type="password" placeholder="Enter your TorBox API key" oninput="onApiKeyInput('tb')">
+          <button id="tbValidateBtn" class="btn btn-sm" onclick="validateTorBox()" hidden>Validate</button>
+        </div>
+        <div class="field-note">Use TorBox as the debrid resolver for cached torrent playback.</div>
       </div>
-      <div class="field-note">Optional second debrid provider. Used as a fallback when Real-Debrid does not have a stream cached, or as the primary provider if Real-Debrid is not configured.</div>
+      <div class="field">
+        <label for="directPlaybackMode">Direct Playback URLs</label>
+        <select id="directPlaybackMode">
+          <option value="torrentsOnly">Torrent-backed only</option>
+          <option value="all">Allow all direct URLs</option>
+          <option value="off">Disabled</option>
+        </select>
+        <div class="field-note">TorBox-only option for provider results that expose a playable URL instead of a torrent hash. Allow all includes Usenet-backed URLs for accounts that support them.</div>
+      </div>
     </div>
   </section>
 
@@ -354,6 +365,7 @@
   let hasStoredTvdbApiKey = false
   let hasStoredTraktClientSecret = false
   let hasStoredMdblistApiKey = false
+  let activeDebridProvider = 'rd'
   let managedUsers = []
   let deletedUserIds = new Set()
   let userModalMode = 'create'
@@ -511,9 +523,8 @@
     const badge = cfg ? document.getElementById(cfg.badgeId) : null
     if (!badge) return
     badge.hidden = !text
-    badge.className = ['pill', kind].filter(Boolean).join(' ')
-    const dot = kind ? `<span class="pill-dot"></span>` : ''
-    badge.innerHTML = text ? `${dot}<span>${text}</span>` : ''
+    badge.className = ['config-state', kind].filter(Boolean).join(' ')
+    badge.textContent = text || ''
   }
 
   function setApiStoredStatus(service) {
@@ -521,13 +532,16 @@
     if (!cfg) return
     const input = document.getElementById(cfg.inputId)
     const button = document.getElementById(cfg.buttonId)
+    const isDebrid = service === 'rd' || service === 'tb'
+    const isActiveDebrid = !isDebrid || service === activeDebridProvider
     const hasNewValue = input.value.trim().length > 0
-    button.hidden = !hasNewValue
-    button.disabled = false
+    input.disabled = !isActiveDebrid
+    button.hidden = !hasNewValue || !isActiveDebrid
+    button.disabled = !isActiveDebrid
 
-    if (hasNewValue) {
+    if (hasNewValue && isActiveDebrid) {
       setConfigStateBadge(service, 'Needs Validation', 'pending')
-    } else if (cfg.hasStored()) {
+    } else if (cfg.hasStored() && isActiveDebrid) {
       setConfigStateBadge(service, 'Connected', 'ok')
     } else {
       setConfigStateBadge(service, '', '')
@@ -536,6 +550,27 @@
 
   function onApiKeyInput(service) {
     setApiStoredStatus(service)
+  }
+
+  function setDebridProvider(provider) {
+    activeDebridProvider = provider === 'tb' ? 'tb' : 'rd'
+    const rdActive = activeDebridProvider === 'rd'
+    const rdTab = document.getElementById('debridTabRd')
+    const tbTab = document.getElementById('debridTabTb')
+    const rdPanel = document.getElementById('debridPanelRd')
+    const tbPanel = document.getElementById('debridPanelTb')
+    rdTab.classList.toggle('active', rdActive)
+    tbTab.classList.toggle('active', !rdActive)
+    rdTab.setAttribute('aria-selected', String(rdActive))
+    tbTab.setAttribute('aria-selected', String(!rdActive))
+    rdPanel.hidden = !rdActive
+    tbPanel.hidden = rdActive
+    document.getElementById('rdApiKey').disabled = !rdActive
+    document.getElementById('rdValidateBtn').disabled = !rdActive
+    document.getElementById('torBoxApiKey').disabled = rdActive
+    document.getElementById('tbValidateBtn').disabled = rdActive
+    setApiStoredStatus('rd')
+    setApiStoredStatus('tb')
   }
 
   function setMdblistStoredStatus() {
@@ -565,6 +600,7 @@
     hasStoredTvdbApiKey = !!d.hasTvdbApiKey
     hasStoredTraktClientSecret = !!d.hasTraktClientSecret
     hasStoredMdblistApiKey = !!d.hasMdblistApiKey
+    activeDebridProvider = d.activeDebridProvider || (hasStoredTorBoxApiKey && !hasStoredRdApiKey ? 'tb' : 'rd')
     document.getElementById('sootioUrl').value         = d.sootioUrl         || ''
     renderProviderRows((d.streamProviderUrls || '').split('\n').map(v => v.trim()).filter(Boolean))
     document.getElementById('englishStreamMode').value = d.englishStreamMode || 'prefer'
@@ -589,8 +625,7 @@
     deletedUserIds = new Set()
     renderUsers()
 
-    setApiStoredStatus('rd')
-    setApiStoredStatus('tb')
+    setDebridProvider(activeDebridProvider)
     setApiStoredStatus('tmdb')
     setApiStoredStatus('tvdb')
     setMdblistStoredStatus()
@@ -949,6 +984,7 @@
       streamProviderUrls: collectProviderUrls().join('\n'),
       englishStreamMode: document.getElementById('englishStreamMode').value,
       directPlaybackMode: document.getElementById('directPlaybackMode').value,
+      activeDebridProvider,
       serverUrl:         document.getElementById('serverUrl').value,
       showAddDefaultMode: document.getElementById('showAddDefaultMode').value,
       movieReleaseMode: document.getElementById('movieReleaseMode').value,
@@ -959,8 +995,8 @@
       traktCollections: document.getElementById('traktCollections').checked,
       traktLists:        selectedTraktLists,
       mdblistLists: document.getElementById('mdblistLists').value,
-      ...(rdApiKey ? { rdApiKey } : {}),
-      ...(torBoxApiKey ? { torBoxApiKey } : {}),
+      ...(activeDebridProvider === 'rd' && rdApiKey ? { rdApiKey } : {}),
+      ...(activeDebridProvider === 'tb' && torBoxApiKey ? { torBoxApiKey } : {}),
       ...(tmdbApiKey ? { tmdbApiKey } : {}),
       ...(tvdbApiKey ? { tvdbApiKey } : {}),
       ...(traktClientSecret ? { traktClientSecret } : {}),

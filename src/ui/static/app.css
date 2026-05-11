@@ -229,7 +229,6 @@ select:disabled {
   background: rgba(143, 184, 255, .1);
 }
 
-.stat.books .stat-value  { color: var(--amber); }
 .stat.requests .stat-value { color: var(--violet); }
 
 .page-header {
@@ -580,6 +579,24 @@ label {
   color: #ffd2cf;
   border-color: var(--red-border);
   background: var(--red-dim);
+}
+
+.debrid-intro {
+  margin: -6px 0 14px;
+}
+
+.debrid-tabs {
+  margin: 0 0 16px;
+}
+
+.debrid-tabs .tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.debrid-panel[hidden] {
+  display: none;
 }
 
 .stats {

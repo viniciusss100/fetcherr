@@ -92,17 +92,4 @@ export const config = {
   englishStreamMode: parseEnglishStreamMode(process.env.ENGLISH_STREAM_MODE ?? ''),
   directPlaybackMode: parseDirectPlaybackMode(process.env.DIRECT_PLAYBACK_MODE),
   serverUrl:         (process.env.SERVER_URL ?? 'http://localhost:9990').replace(/\/$/, ''),
-  // AudioBookShelf
-  absUrl:            (process.env.ABS_URL ?? '').replace(/\/$/, ''),
-  absApiKey:         process.env.ABS_API_KEY ?? '',
-  absDownloadPath:   process.env.ABS_DOWNLOAD_PATH ?? '/audiobooks',
-  // Prowlarr
-  prowlarrUrl:       (process.env.PROWLARR_URL ?? '').replace(/\/$/, ''),
-  prowlarrApiKey:    process.env.PROWLARR_API_KEY ?? '',
-  // qBittorrent
-  qbittorrentUrl:      (process.env.QBITTORRENT_URL ?? '').replace(/\/$/, ''),
-  qbittorrentUsername: process.env.QBITTORRENT_USERNAME ?? '',
-  qbittorrentPassword: process.env.QBITTORRENT_PASSWORD ?? '',
-  // MAM cookie file (updated by seedboxapi / sync_mam_cookie_to_prowlarr.py)
-  mamCookieFile: process.env.MAM_COOKIE_FILE ?? '/home/tyler/gluetun/config-mam/MAM.cookies',
 }
