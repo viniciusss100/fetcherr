@@ -210,6 +210,107 @@ function similarity(a: string, b: string): number {
   return common / Math.max(tokA.size, tokB.size, 1)
 }
 
+function torrentFilePath(file: TbTorrentFile): string {
+  return file.absolute_path || file.name
+}
+
+function basename(value: string): string {
+  return value.split(/[\\/]/).filter(Boolean).pop() || value
+}
+
+function withoutExtension(value: string): string {
+  return value.replace(/\.[a-z0-9]{2,5}$/i, '')
+}
+
+function normalizedFilename(value: string): string {
+  return withoutExtension(basename(value))
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+}
+
+function filenameTokens(value: string): Set<string> {
+  return new Set(
+    normalizedFilename(value)
+      .split(/\s+/)
+      .filter(token => token.length > 1),
+  )
+}
+
+const TECHNICAL_FILENAME_TOKENS = new Set([
+  '2160p', '1080p', '720p', '480p', '4k', 'uhd',
+  'remux', 'bluray', 'blu-ray', 'web', 'webrip', 'webdl', 'web-dl', 'hdtv',
+  'hdr', 'hdr10', 'dv', 'dolby', 'vision', 'hevc', 'h265', 'x265', 'avc', 'h264', 'x264',
+  'truehd', 'atmos', 'dts', 'aac', 'ddp', 'dd', 'flac',
+  'proper', 'repack', 'extended', 'internal',
+])
+
+function identityTokens(value: string): Set<string> {
+  const tokens = [...filenameTokens(value)].filter(token =>
+    !TECHNICAL_FILENAME_TOKENS.has(token)
+    && !/^\d+$/.test(token)
+    && !/^(?:19|20)\d{2}$/.test(token)
+    && !/^tt\d+$/.test(token)
+    && token !== 'imdb',
+  )
+  return new Set(tokens)
+}
+
+function imdbIds(value: string): Set<string> {
+  const ids = normalizedFilename(value).match(/\btt\d{5,}\b/g) ?? []
+  return new Set(ids)
+}
+
+function yearTokens(value: string): Set<string> {
+  const years = normalizedFilename(value).match(/\b(?:19|20)\d{2}\b/g) ?? []
+  return new Set(years)
+}
+
+function filenameHintScore(file: TbTorrentFile, hint: string): number {
+  const filePath = torrentFilePath(file)
+  const fileBase = normalizedFilename(filePath)
+  const hintBase = normalizedFilename(hint)
+  if (!fileBase || !hintBase) return 0
+  if (fileBase === hintBase) return 100
+  if (normalizedFilename(filePath) === hintBase) return 100
+  if (fileBase.includes(hintBase) || hintBase.includes(fileBase)) {
+    return 80 * Math.min(fileBase.length, hintBase.length) / Math.max(fileBase.length, hintBase.length)
+  }
+
+  const fileImdbIds = imdbIds(fileBase)
+  const hintImdbIds = imdbIds(hintBase)
+  if (hintImdbIds.size && fileImdbIds.size) {
+    let hasMatchingImdbId = false
+    for (const imdbId of hintImdbIds) if (fileImdbIds.has(imdbId)) hasMatchingImdbId = true
+    if (!hasMatchingImdbId) return 0
+  }
+
+  const fileYears = yearTokens(fileBase)
+  const hintYears = yearTokens(hintBase)
+  if (hintYears.size && fileYears.size) {
+    let hasMatchingYear = false
+    for (const year of hintYears) if (fileYears.has(year)) hasMatchingYear = true
+    if (!hasMatchingYear) return 0
+  }
+
+  const fileIdentityTokens = identityTokens(fileBase)
+  const hintIdentityTokens = identityTokens(hintBase)
+  if (hintIdentityTokens.size) {
+    let hasMatchingIdentityToken = false
+    for (const token of hintIdentityTokens) if (fileIdentityTokens.has(token)) hasMatchingIdentityToken = true
+    if (!hasMatchingIdentityToken) return 0
+  }
+
+  const fileTokenSet = filenameTokens(fileBase)
+  const hintTokenSet = filenameTokens(hintBase)
+  if (!hintTokenSet.size || !fileTokenSet.size) return 0
+  let common = 0
+  for (const token of hintTokenSet) if (fileTokenSet.has(token)) common++
+  const coverage = common / hintTokenSet.size
+  const balance = common / Math.max(fileTokenSet.size, hintTokenSet.size)
+  return (coverage * 70) + (balance * 30)
+}
+
 function episodeMarker(value: string): string | null {
   const match = value.toLowerCase().match(/\bs(\d{1,2})\s*e(\d{1,2})\b/)
   if (!match) return null
@@ -225,17 +326,20 @@ function pickBestFile(files: TbTorrentFile[], filePathHint?: string): TbTorrentF
     const hint = filePathHint.toLowerCase()
     const hintEpisode = episodeMarker(hint)
     if (hintEpisode) {
-      const episodeMatches = pool.filter(f => episodeMarker(f.name) === hintEpisode)
+      const episodeMatches = pool.filter(f => episodeMarker(torrentFilePath(f)) === hintEpisode)
       if (episodeMatches.length === 1) return episodeMatches[0]
       if (episodeMatches.length > 1) {
         return [...episodeMatches].sort(
-          (a, b) => similarity(b.name.toLowerCase(), hint) - similarity(a.name.toLowerCase(), hint),
+          (a, b) => similarity(torrentFilePath(b).toLowerCase(), hint) - similarity(torrentFilePath(a).toLowerCase(), hint),
         )[0]
       }
     }
-    return [...pool].sort(
-      (a, b) => similarity(b.name.toLowerCase(), hint) - similarity(a.name.toLowerCase(), hint),
-    )[0]
+    const scored = pool
+      .map(file => ({ file, score: filenameHintScore(file, hint) }))
+      .sort((a, b) => b.score - a.score || b.file.size - a.file.size)
+    const best = scored[0]
+    if (best && best.score >= 45) return best.file
+    throw new Error(`TorBox torrent did not contain hinted file: ${basename(filePathHint)}`)
   }
 
   return pool.reduce((best, f) => (f.size > best.size ? f : best))
