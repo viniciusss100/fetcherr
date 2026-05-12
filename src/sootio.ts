@@ -11,6 +11,7 @@ export interface Stream {
   sources?:      string[]
   behaviorHints?: Record<string, unknown>
   providerOrder?: number
+  providerLabel?: string
 }
 
 interface StreamRankContext {
@@ -177,6 +178,7 @@ function scoreSummary(score: RankedStreamScore): string {
     `codec=${score.codec}`,
     `container=${score.container}`,
     `providerOrder=${s.providerOrder ?? 999}`,
+    `provider=${JSON.stringify(s.providerLabel ?? '')}`,
     `name=${JSON.stringify(s.name ?? '')}`,
     `title=${JSON.stringify(s.title ?? '')}`,
     `filename=${JSON.stringify(filename)}`,
@@ -277,11 +279,62 @@ function providerBases(): string[] {
   return [...new Set(urls)]
 }
 
+function isSensitivePathSegment(segment: string): boolean {
+  return segment.length >= 16
+    || /^[0-9a-f]{12,}$/i.test(segment)
+    || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(segment)
+}
+
+function providerLabel(base: string, idx: number): string {
+  try {
+    const parsed = new URL(base)
+    const path = parsed.pathname
+      .split('/')
+      .filter(Boolean)
+      .filter(segment => segment.toLowerCase() !== 'manifest.json')
+      .map(segment => isSensitivePathSegment(segment) ? ':redacted' : segment)
+      .join('/')
+    return `provider#${idx + 1} ${parsed.hostname}${path ? `/${path}` : ''}`.slice(0, 180)
+  } catch {
+    return `provider#${idx + 1} ${base.replace(/[A-Za-z0-9_-]{16,}/g, ':redacted').slice(0, 160)}`
+  }
+}
+
 async function fetchStreams(url: string): Promise<Stream[]> {
   const res = await fetch(url, { signal: AbortSignal.timeout(30_000) })
   if (!res.ok) throw new Error(`AIOStreams returned ${res.status}`)
   const json = await res.json() as { streams?: Stream[] }
   return json.streams ?? []
+}
+
+export function summarizeStreamForLog(s: Stream): string {
+  const hash = extractHashFromStream(s)
+  const urlKind = s.url
+    ? s.url.startsWith('magnet:')
+      ? 'magnet'
+      : (() => {
+          try {
+            const parsed = new URL(s.url)
+            return `${parsed.protocol.replace(':', '')}:${parsed.hostname}`
+          } catch {
+            return 'url'
+          }
+        })()
+    : 'none'
+  const filename = typeof s.behaviorHints?.filename === 'string' ? s.behaviorHints.filename : ''
+  const behaviorKeys = s.behaviorHints ? Object.keys(s.behaviorHints).sort() : []
+  return [
+    `provider=${JSON.stringify(s.providerLabel ?? '')}`,
+    `hash=${hash ? `${hash.slice(0, 8)}…` : 'none'}`,
+    `url=${urlKind}`,
+    `infoHash=${typeof s.infoHash === 'string' ? 'yes' : 'no'}`,
+    `sources=${s.sources?.length ?? 0}`,
+    `fileIdx=${JSON.stringify(s.fileIdx ?? '')}`,
+    `name=${JSON.stringify(s.name ?? '')}`,
+    `title=${JSON.stringify(s.title ?? '')}`,
+    `filename=${JSON.stringify(filename)}`,
+    `behaviorHints=${JSON.stringify(behaviorKeys)}`,
+  ].join(' ')
 }
 
 async function fetchStreamsFromProviders(path: string): Promise<Stream[]> {
@@ -292,11 +345,22 @@ async function fetchStreamsFromProviders(path: string): Promise<Stream[]> {
     providers.map(async (base, idx) => {
       const url = `${base}${path}`
       const streams = await fetchStreams(url)
+      const label = providerLabel(base, idx)
+      const hashBacked = streams.filter(s => extractHashFromStream(s)).length
+      const directUrls = streams.filter(s => !extractHashFromStream(s) && typeof s.url === 'string' && s.url.length > 0).length
+      console.log(
+        `streams: ${label} returned ${streams.length} stream${streams.length === 1 ? '' : 's'} ` +
+        `for ${path} (${hashBacked} hash-backed, ${directUrls} direct-url, ${streams.length - hashBacked - directUrls} metadata-only)`
+      )
+      for (const stream of streams.slice(0, 3)) {
+        console.log(`streams: ${label} sample ${summarizeStreamForLog({ ...stream, providerOrder: idx, providerLabel: label })}`)
+      }
       return streams.map(s => ({
         ...s,
         title: s.title || s.description || '',
         name: s.name || '',
         providerOrder: idx,
+        providerLabel: label,
       }))
     }),
   )

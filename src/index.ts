@@ -8,7 +8,7 @@ import { wrapFastifyLogger } from './logger.js'
 import { markSyncComplete } from './sync-state.js'
 import { cleanupRemovedTraktListSources, syncTraktWatchlist, syncTraktShowsWatchlist, syncTraktList, syncTraktWatchedStatus, startDeviceAuth, tokenStatus } from './trakt.js'
 import { cleanupRemovedMdblistListSources, normalizeMdblistListUrls, syncMdblistList } from './mdblist.js'
-import { fetchRankedStreams, fetchRankedEpisodeStreams, extractHashFromStream } from './sootio.js'
+import { fetchRankedStreams, fetchRankedEpisodeStreams, extractHashFromStream, summarizeStreamForLog } from './sootio.js'
 import { resolveStream, probeAudioLanguages, NotCachedError, ProviderUnavailableError, type ResolvedStream } from './rd.js'
 import { resolveStream as tbResolveStream } from './torbox.js'
 import { getMovieByTmdbId, getShowByImdbId, getEpisodesForSeason, getLatestSeasonNumberForShow, listLatestSeasonShowSubscriptions, listMovies, listShows, pruneAllOrphanedMovies, pruneAllOrphanedShows, removeSourceKey, upsertManualShowSubscription } from './db.js'
@@ -532,6 +532,7 @@ async function resolvePlayableStream(
       .map(entry => entry.stream)
     for (const stream of orderedStreams) {
       const providerOrder = stream.providerOrder ?? 999
+      const providerLabel = stream.providerLabel || `providerOrder=${providerOrder}`
       const hash = extractHashFromStream(stream)
       const hashLabel = hash ? hash.slice(0, 8) : 'direct-url'
       try {
@@ -543,7 +544,7 @@ async function resolvePlayableStream(
         const hint = streamFilenameHint(stream) ?? fileHint
         if (!hash) {
           if (!config.torBoxApiKey || config.directPlaybackMode !== 'all' || !isDirectPlaybackUrl(stream.url)) {
-            app.log.info(`play: skipping providerOrder=${providerOrder} for ${label}, no torrent hash exposed`)
+            app.log.info(`play: skipping ${providerLabel} for ${label}, no torrent hash exposed; ${summarizeStreamForLog(stream)}`)
             continue
           }
 
@@ -588,7 +589,7 @@ async function resolvePlayableStream(
           return { url: stream.url, filename: directFilename }
         }
 
-        app.log.info(`play: trying providerOrder=${providerOrder} hash ${hash.slice(0, 8)}… for ${label}`)
+        app.log.info(`play: trying ${providerLabel} hash ${hash.slice(0, 8)}… for ${label}`)
         let resolved: ResolvedStream | null = null
         let provider = ''
         const attemptKey = resolutionAttemptKey(hash, hint)
