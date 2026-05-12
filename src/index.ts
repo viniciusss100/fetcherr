@@ -68,7 +68,6 @@ getDb()
   if (s.mdblistLists != null) config.mdblistLists = normalizeMdblistListUrls(parseMdblistLists(s.mdblistLists))
   if (s.showAddDefaultMode != null) config.showAddDefaultMode = parseShowAddDefaultMode(s.showAddDefaultMode)
   if (s.movieReleaseMode != null) config.movieReleaseMode = parseMovieReleaseMode(s.movieReleaseMode)
-  if (s.streamProviderUrls != null) config.streamProviderUrls = parseStreamProviderUrls(s.streamProviderUrls)
   if (s.musicAddonUrls != null) config.musicAddonUrls = parseMusicAddonUrls(s.musicAddonUrls)
   if (s.englishStreamMode != null) config.englishStreamMode = parseEnglishStreamMode(s.englishStreamMode)
   if (s.directPlaybackMode != null) config.directPlaybackMode = parseDirectPlaybackMode(s.directPlaybackMode)
@@ -79,8 +78,10 @@ getDb()
       : 'rd'
   if (activeDebridProvider === 'tb') {
     config.rdApiKey = ''
+    config.streamProviderUrls = parseStreamProviderUrls(s.torBoxStreamProviderUrls ?? '')
   } else {
     config.torBoxApiKey = ''
+    config.streamProviderUrls = parseStreamProviderUrls(s.rdStreamProviderUrls ?? s.streamProviderUrls ?? config.streamProviderUrls.join('\n'))
   }
 }
 

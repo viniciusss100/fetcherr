@@ -696,9 +696,14 @@ export async function uiRoutes(app: FastifyInstance) {
   // GET settings — returns current in-memory config values
   app.get('/ui/settings-data', async (req, reply) => {
     if (!requireAdmin(req, reply as never)) return
+    const activeDebridProvider = getSetting('activeDebridProvider') === 'tb' ? 'tb' : 'rd'
+    const rdStreamProviderUrls = getSetting('rdStreamProviderUrls') ?? getSetting('streamProviderUrls') ?? ''
+    const torBoxStreamProviderUrls = getSetting('torBoxStreamProviderUrls') ?? ''
     return {
       sootioUrl:         config.sootioUrl,
       streamProviderUrls: config.streamProviderUrls.join('\n'),
+      rdStreamProviderUrls,
+      torBoxStreamProviderUrls,
       englishStreamMode: config.englishStreamMode,
       directPlaybackMode: config.directPlaybackMode,
       serverUrl:         config.serverUrl,
@@ -715,7 +720,7 @@ export async function uiRoutes(app: FastifyInstance) {
       hasSootioUrl:      !!getSetting('sootioUrl'),
       hasRdApiKey:       !!getSetting('rdApiKey'),
       hasTorBoxApiKey:   !!getSetting('torBoxApiKey'),
-      activeDebridProvider: getSetting('activeDebridProvider') === 'tb' ? 'tb' : 'rd',
+      activeDebridProvider,
       hasTmdbApiKey:     !!getSetting('tmdbApiKey'),
       hasTvdbApiKey:     !!getSetting('tvdbApiKey'),
       hasTraktClientSecret: !!getSetting('traktClientSecret'),
@@ -808,7 +813,8 @@ export async function uiRoutes(app: FastifyInstance) {
     config.torBoxApiKey = activeDebridProvider === 'tb' ? storedTorBoxApiKey : ''
     if (typeof body.streamProviderUrls === 'string') {
       const urls = parseStreamProviderUrls(body.streamProviderUrls)
-      setSetting('streamProviderUrls', urls.join('\n'))
+      const settingKey = activeDebridProvider === 'tb' ? 'torBoxStreamProviderUrls' : 'rdStreamProviderUrls'
+      setSetting(settingKey, urls.join('\n'))
       config.streamProviderUrls = urls
     }
     if (typeof body.englishStreamMode === 'string') {

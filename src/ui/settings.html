@@ -64,12 +64,12 @@
       <div class="field-note">Optional legacy fallback for stream lookups. You can paste the full AIOStreams <code>manifest.json</code> URL. Hash-backed streams are resolved through configured debrid providers; TorBox can also use provider direct playback URLs.</div>
     </div>
     <div class="field">
-      <label for="streamProviderList">Direct Stream Providers</label>
+      <label for="streamProviderList">Direct Stream Providers <span id="streamProviderScope" class="muted"></span></label>
       <div id="streamProviderList" class="provider-list"></div>
       <div class="provider-actions">
         <button type="button" class="btn btn-sm" onclick="addProviderRow()">+ Add Provider</button>
       </div>
-      <div class="field-note">Optional. Query provider base URLs directly and rank the results. Paste one full manifest or base URL per line.</div>
+      <div class="field-note">Optional. Query provider base URLs directly and rank the results. Paste one full manifest or base URL per line. Lists are saved separately for Real-Debrid and TorBox.</div>
     </div>
     <div class="field">
       <label for="englishStreamMode">English Audio</label>
@@ -366,6 +366,8 @@
   let hasStoredTraktClientSecret = false
   let hasStoredMdblistApiKey = false
   let activeDebridProvider = 'rd'
+  let rdStreamProviderUrls = []
+  let torBoxStreamProviderUrls = []
   let managedUsers = []
   let deletedUserIds = new Set()
   let userModalMode = 'create'
@@ -393,6 +395,17 @@
       .filter(Boolean)
   }
 
+  function rememberVisibleProviderRows() {
+    const list = document.getElementById('streamProviderList')
+    if (!list || !list.children.length) return
+    if (activeDebridProvider === 'tb') torBoxStreamProviderUrls = collectProviderUrls()
+    else rdStreamProviderUrls = collectProviderUrls()
+  }
+
+  function providerRowsForActiveDebrid() {
+    return activeDebridProvider === 'tb' ? torBoxStreamProviderUrls : rdStreamProviderUrls
+  }
+
   function providerRemoveButtonHtml() {
     return `
       <button type="button" class="btn-remove provider-remove-btn" title="Remove add-on" aria-label="Remove add-on" onclick="promptRemoveProviderRow(this)">
@@ -405,6 +418,8 @@
 
   function renderProviderRows(urls = []) {
     const list = document.getElementById('streamProviderList')
+    const scope = document.getElementById('streamProviderScope')
+    if (scope) scope.textContent = activeDebridProvider === 'tb' ? '(TorBox)' : '(Real-Debrid)'
     const values = urls.length ? urls : ['']
     list.innerHTML = values.map((url, idx) => `
       <div class="provider-row">
@@ -553,6 +568,7 @@
   }
 
   function setDebridProvider(provider) {
+    rememberVisibleProviderRows()
     activeDebridProvider = provider === 'tb' ? 'tb' : 'rd'
     const rdActive = activeDebridProvider === 'rd'
     const rdTab = document.getElementById('debridTabRd')
@@ -571,6 +587,7 @@
     document.getElementById('tbValidateBtn').disabled = rdActive
     setApiStoredStatus('rd')
     setApiStoredStatus('tb')
+    renderProviderRows(providerRowsForActiveDebrid())
   }
 
   function setMdblistStoredStatus() {
@@ -601,8 +618,9 @@
     hasStoredTraktClientSecret = !!d.hasTraktClientSecret
     hasStoredMdblistApiKey = !!d.hasMdblistApiKey
     activeDebridProvider = d.activeDebridProvider || (hasStoredTorBoxApiKey && !hasStoredRdApiKey ? 'tb' : 'rd')
+    rdStreamProviderUrls = (d.rdStreamProviderUrls || d.streamProviderUrls || '').split('\n').map(v => v.trim()).filter(Boolean)
+    torBoxStreamProviderUrls = (d.torBoxStreamProviderUrls || '').split('\n').map(v => v.trim()).filter(Boolean)
     document.getElementById('sootioUrl').value         = d.sootioUrl         || ''
-    renderProviderRows((d.streamProviderUrls || '').split('\n').map(v => v.trim()).filter(Boolean))
     document.getElementById('englishStreamMode').value = d.englishStreamMode || 'prefer'
     document.getElementById('directPlaybackMode').value = d.directPlaybackMode || 'torrentsOnly'
     setSecretPlaceholder('rdApiKey', hasStoredRdApiKey, 'Enter your Real-Debrid API key')
@@ -973,6 +991,7 @@
   }
 
   async function saveSettings() {
+    rememberVisibleProviderRows()
     const rdApiKey = document.getElementById('rdApiKey').value
     const torBoxApiKey = document.getElementById('torBoxApiKey').value
     const tmdbApiKey = document.getElementById('tmdbApiKey').value
@@ -981,7 +1000,7 @@
     const mdblistApiKey = document.getElementById('mdblistApiKey').value
     const body = {
       sootioUrl:         document.getElementById('sootioUrl').value,
-      streamProviderUrls: collectProviderUrls().join('\n'),
+      streamProviderUrls: providerRowsForActiveDebrid().join('\n'),
       englishStreamMode: document.getElementById('englishStreamMode').value,
       directPlaybackMode: document.getElementById('directPlaybackMode').value,
       activeDebridProvider,
