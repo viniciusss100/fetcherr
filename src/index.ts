@@ -227,13 +227,10 @@ function prewarmPlayback(playPath: string, label: string): void {
   if (!resolver) return
 
   activePlaybackPrewarmPath = playPath
-  app.log.info(`prewarm: started for ${label}`)
-  resolver()
+  const { promise, reused } = getOrCreatePlaybackResolution(playPath, label, resolver)
+  app.log.info(`prewarm: ${reused ? 'reusing resolver' : 'started'} for ${label}`)
+  promise
     .then(resolved => {
-      playbackPrewarmCache.set(playPath, {
-        expiresAt: Date.now() + PLAYBACK_PREWARM_TTL_MS,
-        promise: Promise.resolve(resolved),
-      })
       app.log.info(`prewarm: ready for ${label}${resolved.filename ? ` → ${resolved.filename}` : ''}`)
     })
     .catch(err => app.log.info(`prewarm: ended for ${label}: ${err}`))
