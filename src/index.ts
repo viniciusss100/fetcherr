@@ -10,7 +10,7 @@ import { cleanupRemovedTraktListSources, syncTraktWatchlist, syncTraktShowsWatch
 import { cleanupRemovedMdblistListSources, normalizeMdblistListUrls, syncMdblistList } from './mdblist.js'
 import { fetchRankedStreams, fetchRankedEpisodeStreams, extractHashFromStream, summarizeStreamForLog } from './sootio.js'
 import { resolveStream, probeAudioLanguages, NotCachedError, ProviderUnavailableError, type ResolvedStream } from './rd.js'
-import { resolveStream as tbResolveStream } from './torbox.js'
+import { markPlaybackStarted as markTorBoxPlaybackStarted, resolveStream as tbResolveStream } from './torbox.js'
 import { getMovieByTmdbId, getShowByImdbId, getEpisodesForSeason, getLatestSeasonNumberForShow, listLatestSeasonShowSubscriptions, listMovies, listShows, pruneAllOrphanedMovies, pruneAllOrphanedShows, removeSourceKey, upsertManualShowSubscription } from './db.js'
 import { ensureShowSeasonsCached, refreshShowMetadataIfNeeded, refreshMovieMetadataIfNeeded } from './tmdb.js'
 import { getSessionUser, getTokenFromCookie, isUiAuthConfigured, isValidSession } from './ui/auth.js'
@@ -305,7 +305,11 @@ async function proxyTorBoxStream(
   const upstreamRange = isHead ? (range ?? 'bytes=0-0') : range
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), 30_000)
-  reply.raw?.once('close', () => controller.abort())
+  const finishTorBoxPlayback = markTorBoxPlaybackStarted(resolved.url)
+  reply.raw?.once('close', () => {
+    controller.abort()
+    finishTorBoxPlayback()
+  })
   let upstream: Response
   try {
     upstream = await fetch(resolved.url, {
@@ -316,6 +320,7 @@ async function proxyTorBoxStream(
   } catch (err) {
     app.log.warn(`play: TorBox proxy fetch failed: ${err}`)
     clearTimeout(timeout)
+    finishTorBoxPlayback()
     return reply.code(502).send({ error: 'Upstream fetch failed' })
   }
   clearTimeout(timeout)
@@ -344,12 +349,20 @@ async function proxyTorBoxStream(
     raw.statusCode = statusCode
     for (const [key, value] of Object.entries(responseHeaders)) raw.setHeader(key, value)
     raw.end()
+    finishTorBoxPlayback()
     return
   }
   for (const [key, value] of Object.entries(responseHeaders)) reply.header(key, value)
   reply.code(statusCode)
-  if (isHead || !upstream.body) return reply.send()
-  return reply.send(Readable.fromWeb(upstream.body as import('node:stream/web').ReadableStream))
+  if (isHead || !upstream.body) {
+    finishTorBoxPlayback()
+    return reply.send()
+  }
+  const body = Readable.fromWeb(upstream.body as import('node:stream/web').ReadableStream)
+  body.once('close', finishTorBoxPlayback)
+  body.once('end', finishTorBoxPlayback)
+  body.once('error', finishTorBoxPlayback)
+  return reply.send(body)
 }
 
 const VIDEO_EXTS = new Set(['mkv','mp4','avi','mov','m4v','ts','m2ts','wmv','flv','webm'])

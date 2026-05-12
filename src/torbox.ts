@@ -243,7 +243,15 @@ interface ResolvedCacheEntry extends ResolvedStream {
 
 const RESOLVED_CACHE_TTL_MS = 3 * 60 * 1000
 const resolvedStreamCache   = new Map<string, ResolvedCacheEntry>()
-const CLEANUP_DELAY_MS      = 4 * 60 * 60 * 1000
+const CLEANUP_IDLE_DELAY_MS = 15 * 60 * 1000
+
+interface CleanupEntry {
+  torrentId:       number
+  activeRequests: number
+  timer?:          NodeJS.Timeout
+}
+
+const cleanupByDownloadUrl = new Map<string, CleanupEntry>()
 
 function resolveCacheKey(hash: string, filePathHint?: string): string {
   return `tb:${hash}|${(filePathHint ?? '').toLowerCase()}`
@@ -264,13 +272,48 @@ function setCachedResolvedStream(hash: string, filePathHint: string | undefined,
   })
 }
 
-function scheduleDeleteTorrent(torrentId: number): void {
+function scheduleDeleteTorrent(downloadUrl: string, entry: CleanupEntry): void {
+  if (entry.timer) clearTimeout(entry.timer)
   const timer = setTimeout(() => {
-    void deleteTorrent(torrentId)
-      .then(() => console.log(`torbox: deleted torrent ${torrentId}`))
-      .catch((err: unknown) => console.warn(`torbox: failed to delete torrent ${torrentId}: ${String(err)}`))
-  }, CLEANUP_DELAY_MS)
+    if (entry.activeRequests > 0) return
+    void deleteTorrent(entry.torrentId)
+      .then(() => {
+        cleanupByDownloadUrl.delete(downloadUrl)
+        console.log(`torbox: deleted torrent ${entry.torrentId} after playback idle timeout`)
+      })
+      .catch((err: unknown) => console.warn(`torbox: failed to delete torrent ${entry.torrentId}: ${String(err)}`))
+  }, CLEANUP_IDLE_DELAY_MS)
   timer.unref()
+  entry.timer = timer
+}
+
+function trackDownloadUrl(downloadUrl: string, torrentId: number): void {
+  const existing = cleanupByDownloadUrl.get(downloadUrl)
+  if (existing) {
+    existing.torrentId = torrentId
+    scheduleDeleteTorrent(downloadUrl, existing)
+    return
+  }
+  const entry: CleanupEntry = { torrentId, activeRequests: 0 }
+  cleanupByDownloadUrl.set(downloadUrl, entry)
+  scheduleDeleteTorrent(downloadUrl, entry)
+}
+
+export function markPlaybackStarted(downloadUrl: string): () => void {
+  const entry = cleanupByDownloadUrl.get(downloadUrl)
+  if (!entry) return () => {}
+  entry.activeRequests++
+  if (entry.timer) {
+    clearTimeout(entry.timer)
+    entry.timer = undefined
+  }
+  let finished = false
+  return () => {
+    if (finished) return
+    finished = true
+    entry.activeRequests = Math.max(0, entry.activeRequests - 1)
+    if (entry.activeRequests === 0) scheduleDeleteTorrent(downloadUrl, entry)
+  }
 }
 
 function normalizeHashInput(hash: string): { cacheHash: string; magnet: string; cacheKeyHash: string } {
@@ -335,7 +378,7 @@ export async function resolveStream(
     const file = pickBestFile(info.files, filePathHint)
     const url  = assertDownloadUrl(await requestDownloadLink(created.torrent_id, file.id))
     console.log(`torbox: resolved torrent ${created.torrent_id} → ${file.name}`)
-    scheduleDeleteTorrent(created.torrent_id)
+    trackDownloadUrl(url, created.torrent_id)
     const resolved: ResolvedStream = { url, filename: file.name, bytes: file.size }
     setCachedResolvedStream(cacheKeyHash, filePathHint, resolved)
     return resolved
