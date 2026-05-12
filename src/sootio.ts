@@ -52,8 +52,9 @@ function hasUsableUrl(s: Stream): boolean {
 
 function cachedScore(s: Stream): number {
   const text = streamText(s)
-  if (/\[rd\+\]|\[rd ⚡\]|\[rd⚡\]|\brd\+\b|\[tb\+\]|\[tb ⚡\]|\[tb⚡\]|\btb\+\b|⚡|cached/.test(text)) return 2
-  if (/\[rd\]|\[tb\]/.test(text)) return 1
+  if (/\btorbox\s*\(\s*instant\s*\)|\btorbox\s*\(\s*cached\s*\)|\binstant\s*\(\s*tb\s*\)/.test(text)) return 3
+  if (/\[rd\+\]|\[rd ⚡\]|\[rd⚡\]|\brd\+\b|\[tb\+\]|\[tb ⚡\]|\[tb⚡\]|\btb\+\b|\bready\s*\(\s*tb\s*\)|⚡|cached/.test(text)) return 2
+  if (/\[rd\]|\[tb\]|\btorbox\b/.test(text)) return 1
   return 0
 }
 
@@ -225,15 +226,15 @@ function sourceScore(s: Stream): number {
   return 2
 }
 
-// Codec compatibility score for Infuse — higher is better.
-// H.264 remains safest, but Infuse handles HEVC well enough that codec
-// should be a late tiebreaker rather than a primary quality signal.
+// Codec quality score — higher is better. Playback compatibility is handled
+// later by resolving and probing the selected candidate before returning it.
 function codecScore(s: Stream): number {
   const text = streamText(s)
-  if (/\bav1\b/.test(text))                      return 0
-  if (/\bhevc\b|h\.?265\b|x265\b/.test(text))   return 2
-  if (/\bh\.?264\b|x264\b|avc\b/.test(text))    return 3
-  return 1 // unknown — below identified codecs, above AV1
+  if (/\bav1\b/.test(text))                      return 4
+  if (/\bhevc\b|h\.?265\b|x265\b/.test(text))   return 3
+  if (/\bh\.?264\b|x264\b|avc\b/.test(text))    return 2
+  if (/\bxvid\b|\bdivx\b/.test(text))            return 0
+  return 1
 }
 
 function containerScore(s: Stream): number {
@@ -264,10 +265,10 @@ function rankStreams(streams: Stream[], ctx: StreamRankContext = {}): Stream[] {
       || b.episodeSpecificity - a.episodeSpecificity
       || b.resolution - a.resolution
       || b.source - a.source
-      || b.size - a.size
-      || (config.englishStreamMode === 'off' ? 0 : b.english - a.english)
       || b.codec - a.codec
+      || (config.englishStreamMode === 'off' ? 0 : b.english - a.english)
       || b.container - a.container
+      || b.size - a.size
       || ((a.stream.providerOrder ?? 999) - (b.stream.providerOrder ?? 999))
     )
     .map(score => score.stream)
