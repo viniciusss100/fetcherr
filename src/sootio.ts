@@ -33,6 +33,7 @@ interface RankedStreamScore {
   resolution: number
   source: number
   size: number
+  sizeQuality: number
   codec: number
   container: number
 }
@@ -52,8 +53,7 @@ function hasUsableUrl(s: Stream): boolean {
 
 function cachedScore(s: Stream): number {
   const text = streamText(s)
-  if (/\btorbox\s*\(\s*instant\s*\)|\btorbox\s*\(\s*cached\s*\)|\binstant\s*\(\s*tb\s*\)/.test(text)) return 3
-  if (/\[rd\+\]|\[rd ⚡\]|\[rd⚡\]|\brd\+\b|\[tb\+\]|\[tb ⚡\]|\[tb⚡\]|\btb\+\b|\bready\s*\(\s*tb\s*\)|⚡|cached/.test(text)) return 2
+  if (/\btorbox\s*\(\s*instant\s*\)|\btorbox\s*\(\s*cached\s*\)|\binstant\s*\(\s*tb\s*\)|\[rd\+\]|\[rd ⚡\]|\[rd⚡\]|\brd\+\b|\[tb\+\]|\[tb ⚡\]|\[tb⚡\]|\btb\+\b|\bready\s*\(\s*tb\s*\)|⚡|cached/.test(text)) return 2
   if (/\[rd\]|\[tb\]|\btorbox\b/.test(text)) return 1
   return 0
 }
@@ -155,6 +155,7 @@ function precomputeScore(s: Stream, ctx: StreamRankContext = {}): RankedStreamSc
     resolution: resolutionScore(s),
     source: sourceScore(s),
     size: sizeBytes(s),
+    sizeQuality: sizeQualityScore(s),
     codec: codecScore(s),
     container: containerScore(s),
   }
@@ -176,6 +177,7 @@ function scoreSummary(score: RankedStreamScore): string {
     `resolution=${score.resolution}`,
     `source=${score.source}`,
     `size=${score.size}`,
+    `sizeQuality=${score.sizeQuality}`,
     `codec=${score.codec}`,
     `container=${score.container}`,
     `providerOrder=${s.providerOrder ?? 999}`,
@@ -205,6 +207,62 @@ function sizeBytes(s: Stream): number {
     case 'KB': return val * 1e3
     default:   return 0
   }
+}
+
+function sizeQualityScore(s: Stream): number {
+  const size = sizeBytes(s)
+  if (size <= 0) return 0
+
+  const gb = size / 1e9
+  const resolution = resolutionScore(s)
+  const text = streamMetadataText(s)
+  const episode = /\bs\d{2}e\d{2}\b/.test(text)
+
+  if (episode) {
+    if (resolution >= 4) {
+      if (gb >= 4 && gb <= 14) return 5
+      if (gb >= 2 && gb < 4) return 4
+      if (gb > 14 && gb <= 24) return 4
+      if (gb > 24) return 3
+      return 2
+    }
+    if (resolution >= 3) {
+      if (gb >= 1.5 && gb <= 8) return 5
+      if (gb >= 0.8 && gb < 1.5) return 4
+      if (gb > 8 && gb <= 16) return 4
+      if (gb > 16) return 3
+      return 2
+    }
+    if (resolution >= 2) {
+      if (gb >= 0.5 && gb <= 3) return 5
+      if (gb > 3 && gb <= 6) return 4
+      if (gb > 6) return 3
+      return 2
+    }
+    return gb >= 0.2 ? 3 : 1
+  }
+
+  if (resolution >= 4) {
+    if (gb >= 18 && gb <= 60) return 5
+    if (gb >= 10 && gb < 18) return 4
+    if (gb > 60 && gb <= 90) return 4
+    if (gb > 90) return 3
+    return 2
+  }
+  if (resolution >= 3) {
+    if (gb >= 6 && gb <= 25) return 5
+    if (gb >= 3 && gb < 6) return 4
+    if (gb > 25 && gb <= 45) return 4
+    if (gb > 45) return 3
+    return 2
+  }
+  if (resolution >= 2) {
+    if (gb >= 1.5 && gb <= 8) return 5
+    if (gb > 8 && gb <= 15) return 4
+    if (gb > 15) return 3
+    return 2
+  }
+  return gb >= 0.7 ? 3 : 1
 }
 
 function resolutionScore(s: Stream): number {
@@ -265,6 +323,7 @@ function rankStreams(streams: Stream[], ctx: StreamRankContext = {}): Stream[] {
       || b.episodeSpecificity - a.episodeSpecificity
       || b.resolution - a.resolution
       || b.source - a.source
+      || b.sizeQuality - a.sizeQuality
       || b.codec - a.codec
       || (config.englishStreamMode === 'off' ? 0 : b.english - a.english)
       || b.container - a.container
