@@ -690,12 +690,16 @@ export async function uiRoutes(app: FastifyInstance) {
   // ── Settings page ──────────────────────────────────────────────────────────
   app.get('/ui/settings', async (req, reply) => {
     if (!requireAdmin(req, reply as never)) return
-    return reply.type('text/html').send(html('settings.html'))
+    return reply
+      .header('Cache-Control', 'no-store')
+      .type('text/html')
+      .send(html('settings.html'))
   })
 
   // GET settings — returns current in-memory config values
   app.get('/ui/settings-data', async (req, reply) => {
     if (!requireAdmin(req, reply as never)) return
+    reply.header('Cache-Control', 'no-store')
     const activeDebridProvider = getSetting('activeDebridProvider') === 'tb' ? 'tb' : 'rd'
     const rdStreamProviderUrls = getSetting('rdStreamProviderUrls') ?? getSetting('streamProviderUrls') ?? ''
     const torBoxStreamProviderUrls = getSetting('torBoxStreamProviderUrls') ?? ''
@@ -810,12 +814,18 @@ export async function uiRoutes(app: FastifyInstance) {
     const storedTorBoxApiKey = getSetting('torBoxApiKey') || ''
     config.rdApiKey = activeDebridProvider === 'rd' ? storedRdApiKey : ''
     config.torBoxApiKey = activeDebridProvider === 'tb' ? storedTorBoxApiKey : ''
-    if (typeof body.streamProviderUrls === 'string') {
-      const urls = parseStreamProviderUrls(body.streamProviderUrls)
-      const settingKey = activeDebridProvider === 'tb' ? 'torBoxStreamProviderUrls' : 'rdStreamProviderUrls'
-      setSetting(settingKey, urls.join('\n'))
-      config.streamProviderUrls = urls
+    if (typeof body.rdStreamProviderUrls === 'string') {
+      setSetting('rdStreamProviderUrls', parseStreamProviderUrls(body.rdStreamProviderUrls).join('\n'))
     }
+    if (typeof body.torBoxStreamProviderUrls === 'string') {
+      setSetting('torBoxStreamProviderUrls', parseStreamProviderUrls(body.torBoxStreamProviderUrls).join('\n'))
+    }
+    if (typeof body.streamProviderUrls === 'string') {
+      const settingKey = activeDebridProvider === 'tb' ? 'torBoxStreamProviderUrls' : 'rdStreamProviderUrls'
+      setSetting(settingKey, parseStreamProviderUrls(body.streamProviderUrls).join('\n'))
+    }
+    const activeStreamProviderSetting = activeDebridProvider === 'tb' ? 'torBoxStreamProviderUrls' : 'rdStreamProviderUrls'
+    config.streamProviderUrls = parseStreamProviderUrls(getSetting(activeStreamProviderSetting) ?? '')
     if (typeof body.englishStreamMode === 'string') {
       const mode = parseEnglishStreamMode(body.englishStreamMode)
       setSetting('englishStreamMode', mode)
