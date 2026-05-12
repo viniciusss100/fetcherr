@@ -50,6 +50,9 @@ const proxiedImageCache = new Map<string, { buffer: Buffer; contentType: string;
 const traktCollectionSummaryCache = new Map<string, { expiresAt: number; summaries: TraktCollectionSummary[] }>()
 type JellyfinRouteOptions = {
   prewarmPlayback?: (playPath: string, label: string) => void
+  registerPlaybackItem?: (itemId: string, playPath: string) => void
+  touchPlaybackItem?: (itemId: string) => void
+  stopPlaybackItem?: (itemId: string) => void
 }
 type ImageKind = 'poster' | 'backdrop' | 'logo'
 type ImageQuery = {
@@ -1837,6 +1840,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     const itemId       = body?.ItemId       as string | undefined
     const positionTicks = body?.PositionTicks as number | undefined
     if (itemId && positionTicks != null) {
+      opts.touchPlaybackItem?.(itemId)
       saveProgress(itemId, positionTicks, user.id)
       app.log.info(`progress: saved ${itemId} at ${positionTicks} ticks`)
     } else {
@@ -1851,6 +1855,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     const itemId       = body?.ItemId       as string | undefined
     const positionTicks = body?.PositionTicks as number | undefined
     if (itemId && positionTicks != null) {
+      opts.touchPlaybackItem?.(itemId)
       saveProgress(itemId, positionTicks, user.id)
       app.log.info(`progress: saved ${itemId} at ${positionTicks} ticks`)
     } else {
@@ -1867,6 +1872,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     const bodyRuntimeTicks  = body?.RunTimeTicks       as number  | undefined
     const playedToCompletion = body?.PlayedToCompletion as boolean | undefined
     if (itemId) {
+      opts.stopPlaybackItem?.(itemId)
       const runtimeTicks = bodyRuntimeTicks ?? runtimeTicksForItem(itemId) ?? undefined
       if (playedToCompletion || reachedCompletionThreshold(positionTicks, runtimeTicks)) {
         markPlayed(itemId, user.id)
@@ -1926,6 +1932,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
       const playUrl = createSignedPlaybackUrl(buildPlaybackOrigin(req.headers), playPath)
       const label = ep ? ep.name : `S${epRef.seasonNum}E${epRef.episodeNum}`
       app.log.info(`playback: "${show.title}" ${label} → ${playUrl}`)
+      opts.registerPlaybackItem?.(id, playPath)
       opts.prewarmPlayback?.(playPath, `${show.title} ${label}`)
       return {
         MediaSources: [{
@@ -1964,6 +1971,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     const playPath = `/play/${movie.imdbId}`
     const playUrl = createSignedPlaybackUrl(buildPlaybackOrigin(req.headers), playPath)
     app.log.info(`playback: "${movie.title}" → ${playUrl}`)
+    opts.registerPlaybackItem?.(id, playPath)
     opts.prewarmPlayback?.(playPath, movie.title)
     return {
       MediaSources: [{

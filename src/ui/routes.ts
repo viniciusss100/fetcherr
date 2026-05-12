@@ -22,7 +22,7 @@ import {
   getSessionCookie, clearSessionCookie, getTokenFromCookie,
 } from './auth.js'
 import { config } from '../config.js'
-import { normalizeSootioUrl, parseBooleanSetting, parseDirectPlaybackMode, parseEnglishStreamMode, parseMdblistLists, parseMovieReleaseMode, parseShowAddDefaultMode, parseStreamProviderUrls, parseTraktLists } from '../config.js'
+import { normalizeSootioUrl, parseBooleanSetting, parseEnglishStreamMode, parseMdblistLists, parseMovieReleaseMode, parseShowAddDefaultMode, parseStreamProviderUrls, parseTraktLists } from '../config.js'
 import { fetchMovieByTmdbId, fetchMovieCollection, fetchShowByTmdbId, ensureShowSeasonsCached } from '../tmdb.js'
 import { cleanupRemovedTraktListSources, fetchTraktUserLists } from '../trakt.js'
 import { cleanupRemovedMdblistListSources, normalizeMdblistListUrls } from '../mdblist.js'
@@ -705,7 +705,6 @@ export async function uiRoutes(app: FastifyInstance) {
       rdStreamProviderUrls,
       torBoxStreamProviderUrls,
       englishStreamMode: config.englishStreamMode,
-      directPlaybackMode: config.directPlaybackMode,
       serverUrl:         config.serverUrl,
       traktClientId:     config.traktClientId,
       traktWatchlistMovies: config.traktWatchlistMovies,
@@ -821,11 +820,6 @@ export async function uiRoutes(app: FastifyInstance) {
       const mode = parseEnglishStreamMode(body.englishStreamMode)
       setSetting('englishStreamMode', mode)
       config.englishStreamMode = mode
-    }
-    if (typeof body.directPlaybackMode === 'string') {
-      const mode = parseDirectPlaybackMode(body.directPlaybackMode)
-      setSetting('directPlaybackMode', mode)
-      config.directPlaybackMode = mode
     }
     if (body.traktWatchlistMovies != null) {
       const enabled = parseBooleanSetting(String(body.traktWatchlistMovies), true)

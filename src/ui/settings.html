@@ -61,7 +61,7 @@
     <div class="field">
       <label for="sootioUrl">URL</label>
       <input id="sootioUrl" type="url" placeholder="https://your-aiostreams.example.com">
-      <div class="field-note">Optional legacy fallback for stream lookups. You can paste the full AIOStreams <code>manifest.json</code> URL. Hash-backed streams are resolved through configured debrid providers; TorBox can also use provider direct playback URLs.</div>
+      <div class="field-note">Optional legacy fallback for stream lookups. You can paste the full AIOStreams <code>manifest.json</code> URL. Hash-backed streams are resolved through the selected debrid provider.</div>
     </div>
     <div class="field">
       <label for="streamProviderList">Direct Stream Providers <span id="streamProviderScope" class="muted"></span></label>
@@ -114,15 +114,6 @@
           <button id="tbValidateBtn" class="btn btn-sm" onclick="validateTorBox()" hidden>Validate</button>
         </div>
         <div class="field-note">Use TorBox as the debrid resolver for cached torrent playback.</div>
-      </div>
-      <div class="field">
-        <label for="directPlaybackMode">Direct Playback URLs</label>
-        <select id="directPlaybackMode">
-          <option value="torrentsOnly">Torrent-backed only</option>
-          <option value="all">Allow all direct URLs</option>
-          <option value="off">Disabled</option>
-        </select>
-        <div class="field-note">TorBox-only option for provider results that expose a playable URL instead of a torrent hash. Allow all includes Usenet-backed URLs for accounts that support them.</div>
       </div>
     </div>
   </section>
@@ -622,7 +613,6 @@
     torBoxStreamProviderUrls = (d.torBoxStreamProviderUrls || '').split('\n').map(v => v.trim()).filter(Boolean)
     document.getElementById('sootioUrl').value         = d.sootioUrl         || ''
     document.getElementById('englishStreamMode').value = d.englishStreamMode || 'prefer'
-    document.getElementById('directPlaybackMode').value = d.directPlaybackMode || 'torrentsOnly'
     setSecretPlaceholder('rdApiKey', hasStoredRdApiKey, 'Enter your Real-Debrid API key')
     setSecretPlaceholder('torBoxApiKey', hasStoredTorBoxApiKey, 'Enter your TorBox API key')
     setSecretPlaceholder('tmdbApiKey', hasStoredTmdbApiKey, 'Enter your TMDB API key')
@@ -1002,7 +992,6 @@
       sootioUrl:         document.getElementById('sootioUrl').value,
       streamProviderUrls: providerRowsForActiveDebrid().join('\n'),
       englishStreamMode: document.getElementById('englishStreamMode').value,
-      directPlaybackMode: document.getElementById('directPlaybackMode').value,
       activeDebridProvider,
       serverUrl:         document.getElementById('serverUrl').value,
       showAddDefaultMode: document.getElementById('showAddDefaultMode').value,

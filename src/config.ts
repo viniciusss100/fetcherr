@@ -37,6 +37,7 @@ export function parseBooleanSetting(value: string | undefined, fallback = false)
 
 export type EnglishStreamMode = 'off' | 'prefer' | 'require'
 export type DirectPlaybackMode = 'off' | 'torrentsOnly' | 'all'
+export type TorBoxPlaybackMode = 'proxy' | 'requestdlRedirect'
 export type ShowAddDefaultMode = 'all' | 'latest'
 export type MovieReleaseMode = 'digital' | 'theatrical'
 
@@ -46,6 +47,10 @@ export function parseEnglishStreamMode(value: string): EnglishStreamMode {
 
 export function parseDirectPlaybackMode(value: string | undefined): DirectPlaybackMode {
   return value === 'off' || value === 'all' ? value : 'torrentsOnly'
+}
+
+export function parseTorBoxPlaybackMode(value: string | undefined): TorBoxPlaybackMode {
+  return value === 'proxy' ? value : 'requestdlRedirect'
 }
 
 export function parseShowAddDefaultMode(value: string | undefined): ShowAddDefaultMode {
@@ -91,5 +96,6 @@ export const config = {
   musicAddonUrls: parseMusicAddonUrls(process.env.MUSIC_ADDON_URLS ?? process.env.MUSIC_ADDON_URL ?? process.env.SPOTIFLAC_URL ?? ''),
   englishStreamMode: parseEnglishStreamMode(process.env.ENGLISH_STREAM_MODE ?? ''),
   directPlaybackMode: parseDirectPlaybackMode(process.env.DIRECT_PLAYBACK_MODE),
+  torBoxPlaybackMode: parseTorBoxPlaybackMode(process.env.TORBOX_PLAYBACK_MODE),
   serverUrl:         (process.env.SERVER_URL ?? 'http://localhost:9990').replace(/\/$/, ''),
 }

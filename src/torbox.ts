@@ -132,18 +132,24 @@ async function getTorrentInfo(torrentId: number): Promise<TbTorrentInfo> {
   })
 }
 
-async function requestDownloadLink(torrentId: number, fileId: number): Promise<string> {
+function requestDownloadUrl(torrentId: number, fileId: number, redirect: boolean): string {
   const query: Record<string, string> = {
     token:       config.torBoxApiKey,
     torrent_id:  String(torrentId),
     file_id:     String(fileId),
     zip_link:    'false',
-    redirect:    'false',
+    redirect:    redirect ? 'true' : 'false',
     append_name: 'true',
   }
   if (config.torBoxUserIp) query.user_ip = config.torBoxUserIp
+  const url = new URL(`${BASE}/torrents/requestdl`)
+  for (const [key, value] of Object.entries(query)) url.searchParams.set(key, value)
+  return url.toString()
+}
+
+async function requestDownloadLink(torrentId: number, fileId: number): Promise<string> {
   return tbFetch<string>('GET', '/torrents/requestdl', {
-    query,
+    query: Object.fromEntries(new URL(requestDownloadUrl(torrentId, fileId, false)).searchParams.entries()),
   })
 }
 
@@ -316,6 +322,12 @@ export function markPlaybackStarted(downloadUrl: string): () => void {
   }
 }
 
+export function touchDownloadUrl(downloadUrl: string): void {
+  const entry = cleanupByDownloadUrl.get(downloadUrl)
+  if (!entry || entry.activeRequests > 0) return
+  scheduleDeleteTorrent(downloadUrl, entry)
+}
+
 function normalizeHashInput(hash: string): { cacheHash: string; magnet: string; cacheKeyHash: string } {
   const trimmed = hash.trim()
   const magnetHash = trimmed.startsWith('magnet:')
@@ -376,7 +388,9 @@ export async function resolveStream(
   try {
     const info = await waitReady(created.torrent_id)
     const file = pickBestFile(info.files, filePathHint)
-    const url  = assertDownloadUrl(await requestDownloadLink(created.torrent_id, file.id))
+    const url = config.torBoxPlaybackMode === 'requestdlRedirect'
+      ? assertDownloadUrl(requestDownloadUrl(created.torrent_id, file.id, true))
+      : assertDownloadUrl(await requestDownloadLink(created.torrent_id, file.id))
     console.log(`torbox: resolved torrent ${created.torrent_id} → ${file.name}`)
     trackDownloadUrl(url, created.torrent_id)
     const resolved: ResolvedStream = { url, filename: file.name, bytes: file.size }

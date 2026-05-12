@@ -1,6 +1,6 @@
 import { Readable } from 'node:stream'
 import Fastify from 'fastify'
-import { config, normalizeSootioUrl, parseBooleanSetting, parseDirectPlaybackMode, parseEnglishStreamMode, parseMdblistLists, parseMovieReleaseMode, parseMusicAddonUrls, parseShowAddDefaultMode, parseStreamProviderUrls, parseTraktLists } from './config.js'
+import { config, normalizeSootioUrl, parseBooleanSetting, parseEnglishStreamMode, parseMdblistLists, parseMovieReleaseMode, parseMusicAddonUrls, parseShowAddDefaultMode, parseStreamProviderUrls, parseTraktLists } from './config.js'
 import { getDb, getAllSettings } from './db.js'
 import { jellyfinRoutes, resolveJellyfinUser } from './jellyfin/index.js'
 import { uiRoutes } from './ui/routes.js'
@@ -10,7 +10,11 @@ import { cleanupRemovedTraktListSources, syncTraktWatchlist, syncTraktShowsWatch
 import { cleanupRemovedMdblistListSources, normalizeMdblistListUrls, syncMdblistList } from './mdblist.js'
 import { fetchRankedStreams, fetchRankedEpisodeStreams, extractHashFromStream, summarizeStreamForLog } from './sootio.js'
 import { resolveStream, probeAudioLanguages, NotCachedError, ProviderUnavailableError, type ResolvedStream } from './rd.js'
-import { markPlaybackStarted as markTorBoxPlaybackStarted, resolveStream as tbResolveStream } from './torbox.js'
+import {
+  markPlaybackStarted as markTorBoxPlaybackStarted,
+  resolveStream as tbResolveStream,
+  touchDownloadUrl as touchTorBoxDownloadUrl,
+} from './torbox.js'
 import { getMovieByTmdbId, getShowByImdbId, getEpisodesForSeason, getLatestSeasonNumberForShow, listLatestSeasonShowSubscriptions, listMovies, listShows, pruneAllOrphanedMovies, pruneAllOrphanedShows, removeSourceKey, upsertManualShowSubscription } from './db.js'
 import { ensureShowSeasonsCached, refreshShowMetadataIfNeeded, refreshMovieMetadataIfNeeded } from './tmdb.js'
 import { getSessionUser, getTokenFromCookie, isUiAuthConfigured, isValidSession } from './ui/auth.js'
@@ -70,7 +74,6 @@ getDb()
   if (s.movieReleaseMode != null) config.movieReleaseMode = parseMovieReleaseMode(s.movieReleaseMode)
   if (s.musicAddonUrls != null) config.musicAddonUrls = parseMusicAddonUrls(s.musicAddonUrls)
   if (s.englishStreamMode != null) config.englishStreamMode = parseEnglishStreamMode(s.englishStreamMode)
-  if (s.directPlaybackMode != null) config.directPlaybackMode = parseDirectPlaybackMode(s.directPlaybackMode)
   const activeDebridProvider = s.activeDebridProvider === 'tb'
     ? 'tb'
     : config.torBoxApiKey && !config.rdApiKey
@@ -146,6 +149,9 @@ type PlayResolution = { url: string; filename?: string; bytes?: number; sourceHa
 type PlaybackPrewarmEntry = { expiresAt: number; promise: Promise<PlayResolution> }
 const playbackPrewarmCache = new Map<string, PlaybackPrewarmEntry>()
 let activePlaybackPrewarmPath: string | null = null
+const PLAYBACK_ITEM_TTL_MS = 6 * 60 * 60 * 1000
+const playbackItemPaths = new Map<string, { playPath: string; expiresAt: number }>()
+const torBoxPlaybackUrls = new Map<string, { url: string; expiresAt: number }>()
 
 class PlaybackResolutionError extends Error {
   constructor(
@@ -183,6 +189,37 @@ function cleanupPlaybackPrewarmCache() {
   for (const [key, entry] of playbackPrewarmCache) {
     if (entry.expiresAt <= now) playbackPrewarmCache.delete(key)
   }
+  for (const [key, entry] of playbackItemPaths) {
+    if (entry.expiresAt <= now) playbackItemPaths.delete(key)
+  }
+  for (const [key, entry] of torBoxPlaybackUrls) {
+    if (entry.expiresAt <= now) torBoxPlaybackUrls.delete(key)
+  }
+}
+
+function registerPlaybackItem(itemId: string, playPath: string): void {
+  cleanupPlaybackPrewarmCache()
+  playbackItemPaths.set(itemId, { playPath, expiresAt: Date.now() + PLAYBACK_ITEM_TTL_MS })
+}
+
+function rememberTorBoxPlaybackUrl(playPath: string, resolved: PlayResolution): void {
+  if (resolved.provider !== 'TorBox') return
+  torBoxPlaybackUrls.set(playPath, { url: resolved.url, expiresAt: Date.now() + PLAYBACK_ITEM_TTL_MS })
+}
+
+function touchPlaybackItem(itemId: string): void {
+  cleanupPlaybackPrewarmCache()
+  const item = playbackItemPaths.get(itemId)
+  if (!item) return
+  item.expiresAt = Date.now() + PLAYBACK_ITEM_TTL_MS
+  const resolved = torBoxPlaybackUrls.get(item.playPath)
+  if (!resolved) return
+  resolved.expiresAt = Date.now() + PLAYBACK_ITEM_TTL_MS
+  touchTorBoxDownloadUrl(resolved.url)
+}
+
+function stopPlaybackItem(itemId: string): void {
+  touchPlaybackItem(itemId)
 }
 
 function getOrCreatePlaybackResolution(
@@ -818,6 +855,7 @@ app.get('/play/:imdbId', async (req, reply) => {
     const { promise, reused } = getOrCreatePlaybackResolution(playPath, imdbId, () => resolveMoviePlayback(imdbId))
     if (reused) app.log.info(`play: using in-flight resolver for ${imdbId}`)
     const resolved = await promise
+    rememberTorBoxPlaybackUrl(playPath, resolved)
     if (resolved.provider === 'TorBox' && isTorBoxCdnUrl(resolved.url)) return proxyTorBoxStream(resolved, req, reply as never)
     return reply.redirect(resolved.url, 302)
   } catch (err) {
@@ -855,6 +893,7 @@ app.get('/play/:imdbId/:season/:episode', async (req, reply) => {
     const { promise, reused } = getOrCreatePlaybackResolution(playPath, label, () => resolveEpisodePlayback(imdbId, s, e))
     if (reused) app.log.info(`play: using in-flight resolver for ${label}`)
     const resolved = await promise
+    rememberTorBoxPlaybackUrl(playPath, resolved)
     if (resolved.provider === 'TorBox' && isTorBoxCdnUrl(resolved.url)) return proxyTorBoxStream(resolved, req, reply as never)
     return reply.redirect(resolved.url, 302)
   } catch (err) {
@@ -867,8 +906,8 @@ app.get('/play/:imdbId/:season/:episode', async (req, reply) => {
   }
 })
 
-await app.register(jellyfinRoutes, { prewarmPlayback })
-await app.register(jellyfinRoutes, { prefix: '/emby', prewarmPlayback })
+await app.register(jellyfinRoutes, { prewarmPlayback, registerPlaybackItem, touchPlaybackItem, stopPlaybackItem })
+await app.register(jellyfinRoutes, { prefix: '/emby', prewarmPlayback, registerPlaybackItem, touchPlaybackItem, stopPlaybackItem })
 await app.register(uiRoutes)
 
 // ── Trakt auth ────────────────────────────────────────────────────────────────
