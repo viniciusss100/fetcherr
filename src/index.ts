@@ -243,6 +243,18 @@ function isNonRetryableRdError(err: ProviderUnavailableError): boolean {
   return err.status === 401 || err.status === 403 || err.status === 429
 }
 
+function terminalProviderHashFailureReason(err: unknown): string | null {
+  if (err instanceof NotCachedError) return 'not cached'
+  if (err instanceof ProviderUnavailableError && isNonRetryableRdError(err)) {
+    return `provider returned ${err.status ?? 'a non-retryable error'}`
+  }
+  const message = err instanceof Error ? err.message : String(err)
+  if (/\binfringing_file\b|error_code"?\s*:\s*35|[→-]\s*451\b/.test(message)) {
+    return 'provider rejected hash'
+  }
+  return null
+}
+
 function isTorBoxCdnUrl(url: string): boolean {
   try {
     const hostname = new URL(url).hostname.toLowerCase()
@@ -499,6 +511,8 @@ async function resolvePlayableStream(
     let tbTransientFailures = 0
     const attemptedRdResolutions = new Set<string>()
     const attemptedTorBoxResolutions = new Set<string>()
+    const failedRdHashes = new Map<string, string>()
+    const failedTorBoxHashes = new Map<string, string>()
     app.log.info(`play: trying ${streams.length} ranked candidate${streams.length === 1 ? '' : 's'} for ${label}`)
     const orderedStreams = streams
       .map((stream, index) => ({ stream, index }))
@@ -577,9 +591,13 @@ async function resolvePlayableStream(
         let resolved: ResolvedStream | null = null
         let provider = ''
         const attemptKey = resolutionAttemptKey(hash, hint)
+        const normalizedHash = hash.toLowerCase()
 
         if (config.rdApiKey) {
-          if (attemptedRdResolutions.has(attemptKey)) {
+          const failedReason = failedRdHashes.get(normalizedHash)
+          if (failedReason) {
+            app.log.info(`play: skipping RD hash ${hashLabel}… for ${label}, already failed: ${failedReason}`)
+          } else if (attemptedRdResolutions.has(attemptKey)) {
             app.log.info(`play: skipping duplicate RD hash ${hashLabel}… for ${label}`)
           } else {
             attemptedRdResolutions.add(attemptKey)
@@ -588,6 +606,7 @@ async function resolvePlayableStream(
               provider = 'RD'
             } catch (rdErr) {
               if (rdErr instanceof NotCachedError) {
+                failedRdHashes.set(normalizedHash, 'not cached')
                 app.log.info(`play: hash ${hashLabel}… not cached on RD${config.torBoxApiKey ? ', trying TorBox' : ''}`)
               } else if (rdErr instanceof ProviderUnavailableError) {
                 rdTransientFailures += 1
@@ -598,6 +617,8 @@ async function resolvePlayableStream(
                     `trying next candidate (${rdTransientFailures}/${MAX_RD_TRANSIENT_FAILURES})`
                   )
                 } else {
+                  const terminalReason = terminalProviderHashFailureReason(rdErr)
+                  if (terminalReason) failedRdHashes.set(normalizedHash, terminalReason)
                   app.log.warn(
                     `play: RD unavailable for ${label} after ${rdTransientFailures} failure${rdTransientFailures === 1 ? '' : 's'}: ${rdErr}` +
                     (config.torBoxApiKey ? '; falling back to TorBox' : '; not caching playback miss')
@@ -611,6 +632,8 @@ async function resolvePlayableStream(
                   }
                 }
               } else {
+                const terminalReason = terminalProviderHashFailureReason(rdErr)
+                if (terminalReason) failedRdHashes.set(normalizedHash, terminalReason)
                 app.log.warn(`play: hash ${hashLabel}… RD failed: ${rdErr}`)
               }
             }
@@ -618,6 +641,11 @@ async function resolvePlayableStream(
         }
 
         if (!resolved && config.torBoxApiKey) {
+          const failedReason = failedTorBoxHashes.get(normalizedHash)
+          if (failedReason) {
+            app.log.info(`play: skipping TorBox hash ${hashLabel}… for ${label}, already failed: ${failedReason}`)
+            continue
+          }
           if (attemptedTorBoxResolutions.has(attemptKey)) {
             app.log.info(`play: skipping duplicate TorBox hash ${hashLabel}… for ${label}`)
             continue
@@ -628,6 +656,7 @@ async function resolvePlayableStream(
             provider = 'TorBox'
           } catch (tbErr) {
             if (tbErr instanceof NotCachedError) {
+              failedTorBoxHashes.set(normalizedHash, 'not cached')
               app.log.info(`play: hash ${hashLabel}… not cached on TorBox, trying next`)
               continue
             }
@@ -641,6 +670,8 @@ async function resolvePlayableStream(
                 )
                 continue
               }
+              const terminalReason = terminalProviderHashFailureReason(tbErr)
+              if (terminalReason) failedTorBoxHashes.set(normalizedHash, terminalReason)
               app.log.warn(
                 `play: TorBox unavailable for ${label} after ${tbTransientFailures} failure${tbTransientFailures === 1 ? '' : 's'}: ${tbErr}; ` +
                 'not caching playback miss'
@@ -651,6 +682,8 @@ async function resolvePlayableStream(
                 { error: 'Debrid provider unavailable', message: 'Debrid Unavailable' },
               )
             }
+            const terminalReason = terminalProviderHashFailureReason(tbErr)
+            if (terminalReason) failedTorBoxHashes.set(normalizedHash, terminalReason)
             app.log.warn(`play: hash ${hashLabel}… TorBox failed: ${tbErr}; trying next`)
             continue
           }
