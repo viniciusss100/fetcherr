@@ -42,6 +42,7 @@ Real-Debrid and TorBox do not behave identically:
 - Real-Debrid playback can usually redirect clients directly to a resolved debrid URL.
 - TorBox playback is proxied through Fetcherr so Fetcherr can present media-player-friendly response headers, including byte-range behavior expected by Infuse and VidHub.
 - TorBox support has currently been tested with TorBox's official Stremio add-on. Other provider add-ons may work if they return usable torrent hashes or compatible TorBox-backed stream results, but they have not been validated as thoroughly.
+- If you want to support continued Fetcherr development while switching to TorBox, consider using my referral link: [TorBox referral](https://torbox.app/subscription?referral=517608ee-35cb-458f-be00-850a2543a4f0)
 
 Because the providers differ, Fetcherr intentionally encourages choosing one provider instead of configuring both at the same time.
 
