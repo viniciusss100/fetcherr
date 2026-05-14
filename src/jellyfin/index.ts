@@ -1976,10 +1976,30 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
       return { SearchHints: [], TotalRecordCount: 0 }
     }
 
-    const results = await buildSearchResultItems(SearchTerm, includeTypes, undefined, undefined, limit, offset, user)
+    const wantMovies = !includeTypes || includeTypes.includes('movie')
+    const wantShows = !includeTypes || includeTypes.includes('series')
+    const stremioTypes: StremioMediaType[] = [
+      ...(wantMovies ? ['movie' as const] : []),
+      ...(wantShows ? ['series' as const] : []),
+    ]
+    const rawStremioMetas = stremioTypes.length
+      ? await searchStremioMetas(SearchTerm, stremioTypes).catch(() => [])
+      : []
+    const validStremioMetas = rawStremioMetas.filter(meta => !isStremioErrorMeta(meta))
+    const stremioMetas = await enrichStremioMetasWithImdbIds(
+      validStremioMetas.length || !stremioTypes.length
+        ? validStremioMetas
+        : await searchTmdbStremioFallback(SearchTerm, stremioTypes)
+    )
+    const hints = stremioMetas
+      .map(meta => {
+        const mediaType = String(meta.type ?? 'movie').toLowerCase() === 'series' ? 'series' : 'movie'
+        return stremioSearchMetaToHint(meta, mediaType)
+      })
+
     return {
-      SearchHints: results.Items,
-      TotalRecordCount: results.TotalRecordCount,
+      SearchHints: pagedItems(hints, offset, limit),
+      TotalRecordCount: hints.length,
     }
   }
 
