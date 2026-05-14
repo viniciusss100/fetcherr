@@ -1,6 +1,8 @@
 import { AUDIO_LANGUAGE_ALIASES, type AudioLanguage } from './config.js'
 
 const ENGLISH_AUDIO_MARKER_RE = /\boriginal\s*\(?eng(?:lish)?\)?\b|\boriginal audio\b.*\beng(?:lish)?\b|\benglish\b|\beng\b|\baudio[: ._-]*eng(?:lish)?\b|\u{1F1EC}\u{1F1E7}/u
+const PT_STRONG_AUDIO_MARKER_RE = /\bdublado\b|\bdublagem\b|\bpt[ ._-]?br\b|\bpor[ ._-]?br\b|\bbrazilian\b|\bbrasileiro\b|\bportuguese\b|\bportugues\b|\u{1F1E7}\u{1F1F7}|\b(?:cypher|freddiegellar|dual-bioma|dual-c76|tossato|c0ral|dual-nogroup|dual-pia|dual-xor|dual-xar|g4ris|dual-sigma|andrehsa|riper|sigla|tontom|dual-eck|1-sf|0-sf|rarbr|tupac|alfahd|dual-cza|dual-7sprite7|potatin|dual-fly|franceira)\b/iu
+const PT_WEAK_AUDIO_MARKER_RE = /\bdual[ ._-]?audio\b|\baudio[ ._-]?dual\b|\bdubbed\b|\bdual\b/iu
 
 const LANGUAGE_MATCH_WEIGHTS: Record<AudioLanguage, number> = {
   en: 2,
@@ -35,7 +37,7 @@ export function hasEnglishAudioMarker(text: string): boolean {
 }
 
 export function hasPreferredAudioMarker(text: string, language: AudioLanguage): boolean {
-  return hasAudioLanguageMarker(text, language)
+  return preferredAudioMarkerScore(text, language) > 0
 }
 
 export function hasNonPreferredAudioMarker(text: string, language: AudioLanguage): boolean {
@@ -50,6 +52,15 @@ export function preferredAudioPenalty(text: string, language: AudioLanguage): nu
     if (!hasAudioLanguageMarker(text, otherLanguage)) return penalty
     return penalty + LANGUAGE_MATCH_WEIGHTS[otherLanguage]
   }, 0)
+}
+
+export function preferredAudioMarkerScore(text: string, language: AudioLanguage): number {
+  if (language === 'pt') {
+    if (PT_STRONG_AUDIO_MARKER_RE.test(text)) return 3
+    if (PT_WEAK_AUDIO_MARKER_RE.test(text) || hasAudioLanguageMarker(text, language)) return 1
+    return 0
+  }
+  return hasAudioLanguageMarker(text, language) ? 2 : 0
 }
 
 export function nonPreferredAudioPenalty(text: string, language: AudioLanguage): number {

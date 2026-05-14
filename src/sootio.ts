@@ -2,6 +2,7 @@ import { config } from './config.js'
 import {
   hasPreferredAudioMarker,
   hasNonPreferredAudioMarker,
+  preferredAudioMarkerScore,
   preferredAudioPenalty as audioLanguagePenalty,
 } from './streamLanguage.js'
 
@@ -195,7 +196,7 @@ function episodeSpecificityScore(s: Stream): number {
 function precomputeScore(s: Stream, ctx: StreamRankContext = {}): RankedStreamScore {
   return {
     stream: s,
-    preferredAudio: config.englishStreamMode === 'off' ? 0 : (hasPreferredAudioSignal(s) ? 1 : 0),
+    preferredAudio: config.englishStreamMode === 'off' ? 0 : preferredAudioMarkerScore(streamMetadataText(s), config.preferredAudioLanguage),
     preferredAudioPenalty: preferredAudioPenaltyScore(s),
     cached: cachedScore(s),
     unprobeableAudioPenalty: unprobeableAudioPenalty(s),
