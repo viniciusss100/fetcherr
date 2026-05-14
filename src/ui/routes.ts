@@ -22,7 +22,7 @@ import {
   getSessionCookie, clearSessionCookie, getTokenFromCookie,
 } from './auth.js'
 import { config } from '../config.js'
-import { normalizeSootioUrl, parseBooleanSetting, parseEnglishStreamMode, parseMdblistLists, parseMovieReleaseMode, parseShowAddDefaultMode, parseStreamProviderUrls, parseTraktLists } from '../config.js'
+import { normalizeSootioUrl, parseAudioLanguage, parseBooleanSetting, parseEnglishStreamMode, parseMdblistLists, parseMovieReleaseMode, parseShowAddDefaultMode, parseStreamProviderUrls, parseTraktLists } from '../config.js'
 import { fetchMovieByTmdbId, fetchMovieCollection, fetchShowByTmdbId, ensureShowSeasonsCached } from '../tmdb.js'
 import { cleanupRemovedTraktListSources, fetchTraktUserLists } from '../trakt.js'
 import { cleanupRemovedMdblistListSources, normalizeMdblistListUrls } from '../mdblist.js'
@@ -708,6 +708,7 @@ export async function uiRoutes(app: FastifyInstance) {
       streamProviderUrls: config.streamProviderUrls.join('\n'),
       rdStreamProviderUrls,
       torBoxStreamProviderUrls,
+      preferredAudioLanguage: config.preferredAudioLanguage,
       englishStreamMode: config.englishStreamMode,
       serverUrl:         config.serverUrl,
       traktClientId:     config.traktClientId,
@@ -830,6 +831,11 @@ export async function uiRoutes(app: FastifyInstance) {
       const mode = parseEnglishStreamMode(body.englishStreamMode)
       setSetting('englishStreamMode', mode)
       config.englishStreamMode = mode
+    }
+    if (typeof body.preferredAudioLanguage === 'string') {
+      const language = parseAudioLanguage(body.preferredAudioLanguage)
+      setSetting('preferredAudioLanguage', language)
+      config.preferredAudioLanguage = language
     }
     if (body.traktWatchlistMovies != null) {
       const enabled = parseBooleanSetting(String(body.traktWatchlistMovies), true)

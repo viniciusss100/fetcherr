@@ -44,6 +44,8 @@ Real-Debrid and TorBox do not behave identically:
 - TorBox support has currently been tested with TorBox's official Stremio add-on. Other provider add-ons may work if they return usable torrent hashes or compatible TorBox-backed stream results, but they have not been validated as thoroughly.
 - If you want to support continued Fetcherr development while switching to TorBox, consider using my referral link: [TorBox referral](https://torbox.app/subscription?referral=517608ee-35cb-458f-be00-850a2543a4f0)
 
+Fetcherr now lets you choose a preferred audio language in Settings. It uses TMDB and TVDB metadata when available, then falls back to ffprobe on probeable files to confirm the selected language before playback.
+
 Because the providers differ, Fetcherr intentionally encourages choosing one provider instead of configuring both at the same time.
 
 ## Container Image
@@ -166,15 +168,15 @@ With Real-Debrid, Fetcherr generally redirects the client to the resolved RD pla
 
 TorBox support has only been tested with TorBox's official Stremio add-on so far. For best results while testing TorBox, use that add-on and keep TorBox as the active provider in Settings.
 
-### How does the English Audio setting work?
+### How does the audio language setting work?
 
-Fetcherr has three English-audio modes:
+Fetcherr has three audio-language modes:
 
-- `Off`: ignores English-language markers during ranking and does not run language checks.
-- `Prefer English when available`: uses English markers from provider metadata, filenames, or indexer flags as a late tie-breaker. Fetcherr does not run ffprobe in this mode, so higher-quality neutral releases can still win.
-- `Require English audio`: skips streams that clearly indicate non-English audio, accepts streams that clearly indicate English audio, and uses ffprobe to verify neutral probeable files such as MKV releases after the selected debrid provider resolves them.
+- `Off`: ignores language markers during ranking and does not run language checks.
+- `Prefer selected language when available`: uses the selected language from provider metadata, filenames, indexer flags, and title metadata as a late tie-breaker. Fetcherr does not run ffprobe in this mode, so higher-quality neutral releases can still win.
+- `Require selected language audio`: skips streams that clearly indicate a different language, accepts streams that clearly indicate the selected language, and uses ffprobe to verify neutral probeable files such as MKV releases after the selected debrid provider resolves them.
 
-Remote MP4/M4V files are treated more conservatively in `Require English audio` because they are less reliable to probe before playback. In those cases, Fetcherr still needs clear English metadata.
+Remote MP4/M4V files are treated more conservatively in `Require selected language audio` because they are less reliable to probe before playback. In those cases, Fetcherr still needs clear metadata for the selected language.
 
 ### How do I connect Infuse?
 

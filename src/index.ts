@@ -1,6 +1,6 @@
 import { Readable } from 'node:stream'
 import Fastify from 'fastify'
-import { config, normalizeSootioUrl, parseBooleanSetting, parseEnglishStreamMode, parseMdblistLists, parseMovieReleaseMode, parseMusicAddonUrls, parseShowAddDefaultMode, parseStreamProviderUrls, parseTraktLists } from './config.js'
+import { config, normalizeSootioUrl, parseAudioLanguage, parseBooleanSetting, parseEnglishStreamMode, parseMdblistLists, parseMovieReleaseMode, parseMusicAddonUrls, parseShowAddDefaultMode, parseStreamProviderUrls, parseTraktLists } from './config.js'
 import { getDb, getAllSettings } from './db.js'
 import { jellyfinRoutes, resolveJellyfinUser } from './jellyfin/index.js'
 import { uiRoutes } from './ui/routes.js'
@@ -15,11 +15,11 @@ import {
   resolveStream as tbResolveStream,
   touchDownloadUrl as touchTorBoxDownloadUrl,
 } from './torbox.js'
-import { getMovieByTmdbId, getShowByImdbId, getEpisodesForSeason, getLatestSeasonNumberForShow, listLatestSeasonShowSubscriptions, listMovies, listShows, pruneAllOrphanedMovies, pruneAllOrphanedShows, removeSourceKey, upsertManualShowSubscription } from './db.js'
+import { getMovieByImdbId, getShowByImdbId, getEpisodesForSeason, getLatestSeasonNumberForShow, listLatestSeasonShowSubscriptions, listMovies, listShows, pruneAllOrphanedMovies, pruneAllOrphanedShows, removeSourceKey, upsertManualShowSubscription } from './db.js'
 import { ensureShowSeasonsCached, refreshShowMetadataIfNeeded, refreshMovieMetadataIfNeeded } from './tmdb.js'
 import { getSessionUser, getTokenFromCookie, isUiAuthConfigured, isValidSession } from './ui/auth.js'
 import { verifySignedPlaybackPath } from './play-auth.js'
-import { hasEnglishAudioMarker, hasNonEnglishAudioMarker } from './streamLanguage.js'
+import { hasAudioLanguage, hasNonPreferredAudioMarker, hasPreferredAudioMarker } from './streamLanguage.js'
 
 const app = Fastify({
   logger: { level: 'info' },
@@ -73,6 +73,7 @@ getDb()
   if (s.showAddDefaultMode != null) config.showAddDefaultMode = parseShowAddDefaultMode(s.showAddDefaultMode)
   if (s.movieReleaseMode != null) config.movieReleaseMode = parseMovieReleaseMode(s.movieReleaseMode)
   if (s.musicAddonUrls != null) config.musicAddonUrls = parseMusicAddonUrls(s.musicAddonUrls)
+  if (s.preferredAudioLanguage != null) config.preferredAudioLanguage = parseAudioLanguage(s.preferredAudioLanguage)
   if (s.englishStreamMode != null) config.englishStreamMode = parseEnglishStreamMode(s.englishStreamMode)
   const activeDebridProvider = s.activeDebridProvider === 'tb'
     ? 'tb'
@@ -428,18 +429,20 @@ function streamFilenameHint(stream: { behaviorHints?: Record<string, unknown> })
   return typeof filename === 'string' && filename.trim() ? filename : undefined
 }
 
-function streamClearlyEnglish(stream: { name?: string; title?: string; description?: string; behaviorHints?: Record<string, unknown> }): boolean {
+function streamClearlyPreferredLanguage(stream: { name?: string; title?: string; description?: string; behaviorHints?: Record<string, unknown> }): boolean {
   const text = streamMetadataText(stream)
-  const hasEnglish = hasEnglishAudioMarker(text)
-  const hasNonEnglish = hasNonEnglishAudioMarker(text)
-  return hasEnglish && !hasNonEnglish
+  const preferredLanguage = config.preferredAudioLanguage
+  const hasPreferred = hasPreferredAudioMarker(text, preferredLanguage)
+  const hasNonPreferred = hasNonPreferredAudioMarker(text, preferredLanguage)
+  return hasPreferred && !hasNonPreferred
 }
 
-function streamClearlyNonEnglish(stream: { name?: string; title?: string; description?: string; behaviorHints?: Record<string, unknown> }): boolean {
+function streamClearlyNonPreferredLanguage(stream: { name?: string; title?: string; description?: string; behaviorHints?: Record<string, unknown> }): boolean {
   const text = streamMetadataText(stream)
-  const hasEnglish = hasEnglishAudioMarker(text)
-  const hasNonEnglish = hasNonEnglishAudioMarker(text)
-  return hasNonEnglish && !hasEnglish
+  const preferredLanguage = config.preferredAudioLanguage
+  const hasPreferred = hasPreferredAudioMarker(text, preferredLanguage)
+  const hasNonPreferred = hasNonPreferredAudioMarker(text, preferredLanguage)
+  return hasNonPreferred && !hasPreferred
 }
 
 function streamClearlyUsenetBacked(stream: { name?: string; title?: string; description?: string; behaviorHints?: Record<string, unknown> }): boolean {
@@ -518,21 +521,15 @@ async function resolveDirectPlaybackUrl(url: string): Promise<string> {
   }
 }
 
-function shouldProbeEnglishAudio(
+function shouldProbePreferredAudio(
   stream: { name?: string; title?: string; description?: string; behaviorHints?: Record<string, unknown> },
   filename: string,
 ): boolean {
   if (config.englishStreamMode !== 'require') return false
-  if (streamClearlyEnglish(stream)) return false
-  if (streamClearlyNonEnglish(stream)) return false
+  if (streamClearlyPreferredLanguage(stream)) return false
+  if (streamClearlyNonPreferredLanguage(stream)) return false
   if (isRemoteAudioProbeUnreliable(filename)) return false
   return true
-}
-
-function hasEnglishAudio(languages: string[]): boolean {
-  return languages.some(lang =>
-    /^(en|eng|english)$/.test(lang) || /\beng(lish)?\b/.test(lang),
-  )
 }
 
 function hasOnlyUndeterminedAudio(languages: string[]): boolean {
@@ -586,8 +583,8 @@ async function resolvePlayableStream(
       const hash = extractHashFromStream(stream)
       const hashLabel = hash ? hash.slice(0, 8) : 'direct-url'
       try {
-        if (config.englishStreamMode === 'require' && streamClearlyNonEnglish(stream)) {
-          app.log.info(`play: skipping stream metadata for ${label}, clearly non-English`)
+        if (config.englishStreamMode === 'require' && streamClearlyNonPreferredLanguage(stream)) {
+          app.log.info(`play: skipping stream metadata for ${label}, clearly not the preferred language`)
           continue
         }
 
@@ -611,22 +608,22 @@ async function resolvePlayableStream(
             directFilename
             && config.englishStreamMode === 'require'
             && isRemoteAudioProbeUnreliable(directFilename)
-            && !streamClearlyEnglish(stream)
+            && !streamClearlyPreferredLanguage(stream)
           ) {
-            app.log.info(`play: skipping unprobeable ${directFilename}, no confirmed English metadata`)
+            app.log.info(`play: skipping unprobeable ${directFilename}, no confirmed preferred-language metadata`)
             continue
           }
           const isDebridCachedStream = /\[rd\+\]|\[rd ⚡\]|\[rd⚡\]|\brd\+\b|\[tb\+\]|\[tb ⚡\]|\[tb⚡\]|\btb\+\b/.test(streamMetadataText(stream))
           // Skip ffprobe for debrid-cached streams — their proxy URLs will be resolved to
           // CDN URLs at play-time; probing here would waste a TorBox add/delete cycle.
-          if (!isDebridCachedStream && directFilename && shouldProbeEnglishAudio(stream, directFilename)) {
+          if (!isDebridCachedStream && directFilename && shouldProbePreferredAudio(stream, directFilename)) {
             try {
               const audioLanguages = await probeAudioLanguages(stream.url)
               app.log.info(`play: ffprobe audio languages for ${directFilename}: ${audioLanguages.join(', ') || 'none'}`)
               const noLanguageInfo = audioLanguages.length === 0
-              const allowsUndetermined = (hasOnlyUndeterminedAudio(audioLanguages) || noLanguageInfo) && !streamClearlyNonEnglish(stream)
-              if (config.englishStreamMode === 'require' && !hasEnglishAudio(audioLanguages) && !allowsUndetermined) {
-                app.log.info(`play: skipping ${directFilename}, no English audio detected`)
+              const allowsUndetermined = (hasOnlyUndeterminedAudio(audioLanguages) || noLanguageInfo) && !streamClearlyNonPreferredLanguage(stream)
+              if (config.englishStreamMode === 'require' && !hasAudioLanguage(audioLanguages, config.preferredAudioLanguage) && !allowsUndetermined) {
+                app.log.info(`play: skipping ${directFilename}, no preferred audio detected`)
                 continue
               }
             } catch (err) {
@@ -754,22 +751,22 @@ async function resolvePlayableStream(
         if (
           config.englishStreamMode === 'require'
           && isRemoteAudioProbeUnreliable(resolved.filename)
-          && !streamClearlyEnglish(stream)
+          && !streamClearlyPreferredLanguage(stream)
         ) {
-          app.log.info(`play: skipping unprobeable ${resolved.filename}, no confirmed English metadata`)
+          app.log.info(`play: skipping unprobeable ${resolved.filename}, no confirmed preferred-language metadata`)
           continue
         }
-        if (shouldProbeEnglishAudio(stream, resolved.filename)) {
+        if (shouldProbePreferredAudio(stream, resolved.filename)) {
           try {
             const audioLanguages = await probeAudioLanguages(resolved.url)
             app.log.info(`play: ffprobe audio languages for ${resolved.filename}: ${audioLanguages.join(', ') || 'none'}`)
             const noLanguageInfo = audioLanguages.length === 0
-            const allowsUndetermined = (hasOnlyUndeterminedAudio(audioLanguages) || noLanguageInfo) && !streamClearlyNonEnglish(stream)
-            if (config.englishStreamMode === 'require' && !hasEnglishAudio(audioLanguages) && !allowsUndetermined) {
-              app.log.info(`play: skipping ${resolved.filename}, no English audio detected`)
+            const allowsUndetermined = (hasOnlyUndeterminedAudio(audioLanguages) || noLanguageInfo) && !streamClearlyNonPreferredLanguage(stream)
+            if (config.englishStreamMode === 'require' && !hasAudioLanguage(audioLanguages, config.preferredAudioLanguage) && !allowsUndetermined) {
+              app.log.info(`play: skipping ${resolved.filename}, no preferred audio detected`)
               continue
-          }
-        } catch (err) {
+            }
+          } catch (err) {
             app.log.warn(`play: ffprobe failed for ${resolved.filename}: ${summarizeProbeError(err)}`)
           }
         }
@@ -790,7 +787,7 @@ async function resolvePlayableStream(
     )
   }
   const best = config.englishStreamMode === 'require'
-    ? (streams.find(stream => streamClearlyEnglish(stream)) ?? streams.find(stream => !streamClearlyNonEnglish(stream)))
+    ? (streams.find(stream => streamClearlyPreferredLanguage(stream)) ?? streams.find(stream => !streamClearlyNonPreferredLanguage(stream)))
     : streams[0]
   if (!best?.url) {
     cacheFailedPlay(cacheKey, 'No streams found')
@@ -807,7 +804,8 @@ async function resolvePlayableStream(
 
 async function resolveMoviePlayback(imdbId: string): Promise<PlayResolution> {
   const playPath = `/play/${imdbId}`
-  const streams = await fetchRankedStreams(imdbId)
+  const movie = getMovieByImdbId(imdbId)
+  const streams = await fetchRankedStreams(imdbId, config.preferredAudioLanguage, movie?.mediaLanguage ?? '')
   return resolvePlayableStream(streams, imdbId, playPath)
 }
 
@@ -824,6 +822,8 @@ async function resolveEpisodePlayback(imdbId: string, season: number, episodeNum
     episodeNumber,
     show?.year || undefined,
     Number.isFinite(episodeAirYear) ? episodeAirYear : undefined,
+    config.preferredAudioLanguage,
+    show?.mediaLanguage ?? '',
   )
   return resolvePlayableStream(
     streams,

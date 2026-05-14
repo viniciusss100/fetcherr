@@ -35,11 +35,48 @@ export function parseBooleanSetting(value: string | undefined, fallback = false)
   return fallback
 }
 
+export type AudioLanguage =
+  | 'en'
+  | 'ja'
+  | 'es'
+  | 'fr'
+  | 'de'
+  | 'it'
+  | 'ko'
+  | 'zh'
+  | 'pt'
+  | 'ru'
+  | 'hi'
+  | 'ar'
+
 export type EnglishStreamMode = 'off' | 'prefer' | 'require'
 export type DirectPlaybackMode = 'off' | 'torrentsOnly' | 'all'
 export type TorBoxPlaybackMode = 'proxy' | 'requestdlRedirect'
 export type ShowAddDefaultMode = 'all' | 'latest'
 export type MovieReleaseMode = 'digital' | 'theatrical'
+
+const AUDIO_LANGUAGE_ALIASES: Record<AudioLanguage, string[]> = {
+  en: ['en', 'eng', 'english'],
+  ja: ['ja', 'jpn', 'japanese'],
+  es: ['es', 'spa', 'spanish', 'espanol', 'español', 'castellano', 'latino', 'latam'],
+  fr: ['fr', 'fre', 'fra', 'french', 'francais', 'français'],
+  de: ['de', 'ger', 'deu', 'german', 'deutsch'],
+  it: ['it', 'ita', 'italian', 'italiano'],
+  ko: ['ko', 'kor', 'korean'],
+  zh: ['zh', 'zho', 'chi', 'chs', 'cht', 'zhs', 'zht', 'chinese', 'mandarin', 'cantonese'],
+  pt: ['pt', 'por', 'portuguese', 'portugues', 'português', 'pt-br', 'ptbr', 'brazilian'],
+  ru: ['ru', 'rus', 'russian'],
+  hi: ['hi', 'hin', 'hindi'],
+  ar: ['ar', 'ara', 'arabic'],
+}
+
+export function parseAudioLanguage(value: string | undefined): AudioLanguage {
+  const normalized = (value ?? '').trim().toLowerCase()
+  for (const [language, aliases] of Object.entries(AUDIO_LANGUAGE_ALIASES) as Array<[AudioLanguage, string[]]>) {
+    if (aliases.includes(normalized)) return language
+  }
+  return 'en'
+}
 
 export function parseEnglishStreamMode(value: string): EnglishStreamMode {
   return value === 'off' || value === 'require' ? value : 'prefer'
@@ -94,6 +131,7 @@ export const config = {
   movieReleaseMode: parseMovieReleaseMode(process.env.MOVIE_RELEASE_MODE),
   streamProviderUrls: parseStreamProviderUrls(process.env.STREAM_PROVIDER_URLS ?? ''),
   musicAddonUrls: parseMusicAddonUrls(process.env.MUSIC_ADDON_URLS ?? process.env.MUSIC_ADDON_URL ?? process.env.SPOTIFLAC_URL ?? ''),
+  preferredAudioLanguage: parseAudioLanguage(process.env.PREFERRED_AUDIO_LANGUAGE),
   englishStreamMode: parseEnglishStreamMode(process.env.ENGLISH_STREAM_MODE ?? ''),
   directPlaybackMode: parseDirectPlaybackMode(process.env.DIRECT_PLAYBACK_MODE),
   torBoxPlaybackMode: parseTorBoxPlaybackMode(process.env.TORBOX_PLAYBACK_MODE),

@@ -23,6 +23,14 @@ interface TvdbEpisodesResponse {
   } | TvdbEpisodeRecord[]
 }
 
+interface TvdbSeriesResponse {
+  data?: {
+    language?: string | null
+    originalLanguage?: string | null
+    original_language?: string | null
+  } | null
+}
+
 async function login(): Promise<string> {
   if (!config.tvdbApiKey) throw new Error('TVDB_API_KEY not configured')
   if (cachedToken && Date.now() < cachedTokenExpiresAt) return cachedToken
@@ -75,4 +83,22 @@ export async function fetchEpisodeStillFallbacks(tvdbId: number, seasonNumber: n
   }
 
   return map
+}
+
+export async function fetchSeriesLanguage(tvdbId: number): Promise<string> {
+  if (!config.tvdbApiKey || !tvdbId) return ''
+  const paths = [
+    `/series/${tvdbId}`,
+    `/series/${tvdbId}/extended`,
+  ]
+  for (const path of paths) {
+    try {
+      const json = await tvdbGet(path) as TvdbSeriesResponse
+      const language = (json.data?.originalLanguage ?? json.data?.original_language ?? json.data?.language ?? '').trim().toLowerCase()
+      if (language) return language
+    } catch {
+      // ignore and try the next endpoint shape
+    }
+  }
+  return ''
 }

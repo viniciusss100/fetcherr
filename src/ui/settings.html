@@ -67,11 +67,29 @@
       <div class="field-note">Paste one Stremio add-on manifest or base URL per row. Add-ons are saved separately for Real-Debrid and TorBox.</div>
     </div>
     <div class="field">
-      <label for="englishStreamMode">English Audio</label>
+      <label for="preferredAudioLanguage">Preferred Audio Language</label>
+      <select id="preferredAudioLanguage">
+        <option value="en">English</option>
+        <option value="ja">Japanese</option>
+        <option value="es">Spanish</option>
+        <option value="fr">French</option>
+        <option value="de">German</option>
+        <option value="it">Italian</option>
+        <option value="ko">Korean</option>
+        <option value="zh">Chinese</option>
+        <option value="pt">Portuguese</option>
+        <option value="ru">Russian</option>
+        <option value="hi">Hindi</option>
+        <option value="ar">Arabic</option>
+      </select>
+      <div class="field-note">Fetcherr uses this language for stream ranking and ffprobe checks when the provider metadata is ambiguous.</div>
+    </div>
+    <div class="field">
+      <label for="englishStreamMode">Audio Match Mode</label>
       <select id="englishStreamMode">
-        <option value="prefer">Prefer English when available</option>
-        <option value="require">Require English audio</option>
-        <option value="off">Do not rank by English markers</option>
+        <option value="prefer">Prefer selected language when available</option>
+        <option value="require">Require selected language audio</option>
+        <option value="off">Do not rank by language markers</option>
       </select>
       <div class="field-note">Prefer uses provider metadata as a quality tie-breaker. Require verifies neutral probeable files with ffprobe before playback.</div>
     </div>
@@ -622,6 +640,7 @@
       if (activeDebridProvider === 'tb') torBoxStreamProviderUrls = uniqueProviderUrls([legacyAddonUrl, ...torBoxStreamProviderUrls])
       else rdStreamProviderUrls = uniqueProviderUrls([legacyAddonUrl, ...rdStreamProviderUrls])
     }
+    document.getElementById('preferredAudioLanguage').value = d.preferredAudioLanguage || 'en'
     document.getElementById('englishStreamMode').value = d.englishStreamMode || 'prefer'
     setSecretPlaceholder('rdApiKey', hasStoredRdApiKey, 'Enter your Real-Debrid API key')
     setSecretPlaceholder('torBoxApiKey', hasStoredTorBoxApiKey, 'Enter your TorBox API key')
@@ -1003,6 +1022,7 @@
       streamProviderUrls: providerRowsForActiveDebrid().join('\n'),
       rdStreamProviderUrls: rdStreamProviderUrls.join('\n'),
       torBoxStreamProviderUrls: torBoxStreamProviderUrls.join('\n'),
+      preferredAudioLanguage: document.getElementById('preferredAudioLanguage').value,
       englishStreamMode: document.getElementById('englishStreamMode').value,
       activeDebridProvider,
       serverUrl:         document.getElementById('serverUrl').value,

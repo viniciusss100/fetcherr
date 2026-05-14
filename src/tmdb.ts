@@ -5,7 +5,7 @@ import {
   upsertSeason, getSeasonsForShow, type Season,
   upsertEpisode, type Episode, getAiredEpisodesForSeason, getEffectiveShowMode,
 } from './db.js'
-import { fetchEpisodeStillFallbacks } from './tvdb.js'
+import { fetchEpisodeStillFallbacks, fetchSeriesLanguage } from './tvdb.js'
 
 const BASE = 'https://api.themoviedb.org/3'
 const MISSING_STILL_RETRY_MS = 7 * 24 * 60 * 60 * 1000
@@ -51,7 +51,8 @@ async function refreshShowMetadata(show: Show): Promise<Show> {
       TmdbShowRaw & { external_ids?: { imdb_id?: string; tvdb_id?: number }; images?: TmdbImagesResponse; keywords?: TmdbKeywordsResponse }
     const imdbId = r.external_ids?.imdb_id ?? show.imdbId
     const tvdbId = r.external_ids?.tvdb_id ?? show.tvdbId
-    const updated = raw2show(r, imdbId, tvdbId, show.syncedAt)
+    const mediaLanguage = (r.original_language ?? '').trim().toLowerCase() || await fetchSeriesLanguage(tvdbId)
+    const updated = { ...raw2show(r, imdbId, tvdbId, show.syncedAt), mediaLanguage }
     upsertShow(updated)
     return getShowByTmdbId(show.tmdbId) ?? { id: show.id, ...updated }
   } catch {
@@ -62,6 +63,7 @@ async function refreshShowMetadata(show: Show): Promise<Show> {
 interface TmdbMovieRaw {
   id:            number
   title:         string
+  original_language?: string
   overview:      string
   poster_path:   string | null
   backdrop_path: string | null
@@ -163,6 +165,7 @@ function raw2movie(r: TmdbMovieRaw, imdbId = '', listedAt = ''): Omit<Movie, 'id
   return {
     tmdbId:             r.id,
     imdbId,
+    mediaLanguage:      (r.original_language ?? '').trim().toLowerCase(),
     title:              r.title,
     year:               parseYear(r.release_date),
     overview:           r.overview ?? '',
@@ -269,6 +272,7 @@ export function posterUrl(
 interface TmdbShowRaw {
   id:               number
   name:             string
+  original_language?: string
   overview:         string
   poster_path:      string | null
   backdrop_path:    string | null
@@ -308,6 +312,7 @@ function raw2show(r: TmdbShowRaw, imdbId = '', tvdbId = 0, listedAt = ''): Omit<
     tmdbId:       r.id,
     imdbId,
     tvdbId,
+    mediaLanguage: (r.original_language ?? '').trim().toLowerCase(),
     title:        r.name,
     year:         parseYear(r.first_air_date),
     overview:     r.overview ?? '',
@@ -336,7 +341,8 @@ export async function fetchShowByTmdbId(tmdbId: number, listedAt = ''): Promise<
       TmdbShowRaw & { external_ids?: { imdb_id?: string; tvdb_id?: number }; images?: TmdbImagesResponse; keywords?: TmdbKeywordsResponse }
     const imdbId = r.external_ids?.imdb_id ?? ''
     const tvdbId = r.external_ids?.tvdb_id ?? 0
-    const s = raw2show(r, imdbId, tvdbId, listedAt)
+    const mediaLanguage = (r.original_language ?? '').trim().toLowerCase() || await fetchSeriesLanguage(tvdbId)
+    const s = { ...raw2show(r, imdbId, tvdbId, listedAt), mediaLanguage }
     upsertShow(s)
     return { id: 0, ...s }
   } catch {

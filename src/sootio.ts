@@ -1,5 +1,8 @@
 import { config } from './config.js'
-import { hasEnglishAudioMarker, nonEnglishAudioPenalty } from './streamLanguage.js'
+import {
+  hasPreferredAudioMarker,
+  nonPreferredAudioPenalty,
+} from './streamLanguage.js'
 
 export interface Stream {
   name:          string
@@ -17,13 +20,16 @@ export interface Stream {
 interface StreamRankContext {
   expectedYear?: number
   alternateYear?: number
+  preferredLanguage?: string
+  mediaLanguage?: string
 }
 
 interface RankedStreamScore {
   stream: Stream
   cached: number
-  english: number
-  nonEnglishPenalty: number
+  preferredLanguage: number
+  mediaLanguage: number
+  languagePenalty: number
   unprobeableAudioPenalty: number
   regionalPenalty: number
   junkPenalty: number
@@ -58,14 +64,14 @@ function cachedScore(s: Stream): number {
   return 0
 }
 
-function hasEnglishSignal(s: Stream): boolean {
+function hasPreferredSignal(s: Stream, preferredLanguage: string): boolean {
   const text = streamMetadataText(s)
-  return hasEnglishAudioMarker(text)
+  return hasPreferredAudioMarker(text, preferredLanguage)
 }
 
-function nonEnglishPenalty(s: Stream): number {
+function languagePenalty(s: Stream, preferredLanguage: string): number {
   const text = streamMetadataText(s)
-  return nonEnglishAudioPenalty(text)
+  return nonPreferredAudioPenalty(text, preferredLanguage)
 }
 
 function isLikelyUnprobeableRemoteFile(s: Stream): boolean {
@@ -73,18 +79,18 @@ function isLikelyUnprobeableRemoteFile(s: Stream): boolean {
   return /\.(mp4|m4v)(?:\b|$)/.test(text)
 }
 
-function unprobeableAudioPenalty(s: Stream): number {
+function unprobeableAudioPenalty(s: Stream, preferredLanguage: string): number {
   if (config.englishStreamMode === 'off') return 0
   if (!isLikelyUnprobeableRemoteFile(s)) return 0
-  return hasEnglishSignal(s) ? 0 : 2
+  return hasPreferredSignal(s, preferredLanguage) ? 0 : 2
 }
 
-function regionalAudioPenalty(s: Stream): number {
+function regionalAudioPenalty(s: Stream, preferredLanguage: string): number {
   const text = streamMetadataText(s)
   let penalty = 0
-  // Softly demote obvious multi-region audio releases so cleaner English-first
+  // Softly demote obvious multi-region audio releases so cleaner preferred-language
   // candidates win first, without filtering these streams out entirely.
-  if (/\bnordic\b/.test(text) && !hasEnglishSignal(s)) penalty += 2
+  if (/\bnordic\b/.test(text) && !hasPreferredSignal(s, preferredLanguage)) penalty += 2
   return penalty
 }
 
@@ -141,13 +147,16 @@ function episodeSpecificityScore(s: Stream): number {
 }
 
 function precomputeScore(s: Stream, ctx: StreamRankContext = {}): RankedStreamScore {
+  const preferredLanguage = ctx.preferredLanguage ?? config.preferredAudioLanguage
+  const mediaLanguage = ctx.mediaLanguage ?? ''
   return {
     stream: s,
     cached: cachedScore(s),
-    english: hasEnglishSignal(s) ? 1 : 0,
-    nonEnglishPenalty: nonEnglishPenalty(s),
-    unprobeableAudioPenalty: unprobeableAudioPenalty(s),
-    regionalPenalty: regionalAudioPenalty(s),
+    preferredLanguage: hasPreferredSignal(s, preferredLanguage) ? 1 : 0,
+    mediaLanguage: mediaLanguage && hasPreferredSignal(s, mediaLanguage) ? 1 : 0,
+    languagePenalty: languagePenalty(s, preferredLanguage),
+    unprobeableAudioPenalty: unprobeableAudioPenalty(s, preferredLanguage),
+    regionalPenalty: regionalAudioPenalty(s, preferredLanguage),
     junkPenalty: junkPenalty(s),
     yearScore: explicitYearScore(s, ctx),
     years: explicitYearsInStream(s),
@@ -166,8 +175,9 @@ function scoreSummary(score: RankedStreamScore): string {
   const filename = typeof s.behaviorHints?.filename === 'string' ? s.behaviorHints.filename : ''
   return [
     `cached=${score.cached}`,
-    `english=${score.english}`,
-    `nonEnglishPenalty=${score.nonEnglishPenalty}`,
+    `preferredLanguage=${score.preferredLanguage}`,
+    `mediaLanguage=${score.mediaLanguage}`,
+    `languagePenalty=${score.languagePenalty}`,
     `unprobeableAudioPenalty=${score.unprobeableAudioPenalty}`,
     `regionalPenalty=${score.regionalPenalty}`,
     `junkPenalty=${score.junkPenalty}`,
@@ -315,7 +325,7 @@ function rankStreams(streams: Stream[], ctx: StreamRankContext = {}): Stream[] {
     .map(stream => precomputeScore(stream, ctx))
     .sort((a, b) =>
       b.cached - a.cached
-      || a.nonEnglishPenalty - b.nonEnglishPenalty
+      || a.languagePenalty - b.languagePenalty
       || a.unprobeableAudioPenalty - b.unprobeableAudioPenalty
       || a.regionalPenalty - b.regionalPenalty
       || a.junkPenalty - b.junkPenalty
@@ -325,7 +335,8 @@ function rankStreams(streams: Stream[], ctx: StreamRankContext = {}): Stream[] {
       || b.source - a.source
       || b.sizeQuality - a.sizeQuality
       || b.codec - a.codec
-      || (config.englishStreamMode === 'off' ? 0 : b.english - a.english)
+      || (config.englishStreamMode === 'off' ? 0 : b.preferredLanguage - a.preferredLanguage)
+      || b.mediaLanguage - a.mediaLanguage
       || b.container - a.container
       || b.size - a.size
       || ((a.stream.providerOrder ?? 999) - (b.stream.providerOrder ?? 999))
@@ -453,11 +464,11 @@ async function fetchStreamsFromProviders(path: string): Promise<Stream[]> {
  * Fetch all streams for a movie, ranked by cacheability, language safety,
  * quality signals, and compatibility. The caller picks the best candidate.
  */
-export async function fetchRankedStreams(imdbId: string): Promise<Stream[]> {
+export async function fetchRankedStreams(imdbId: string, preferredLanguage = config.preferredAudioLanguage, mediaLanguage = ''): Promise<Stream[]> {
   const streams = await fetchStreamsFromProviders(`/stream/movie/${imdbId}.json`)
   if (!streams.length) throw new Error(`No streams found for ${imdbId}`)
-  const ranked = rankStreams(streams)
-  const summaries = ranked.map(stream => precomputeScore(stream))
+  const ranked = rankStreams(streams, { preferredLanguage, mediaLanguage })
+  const summaries = ranked.map(stream => precomputeScore(stream, { preferredLanguage, mediaLanguage }))
   console.log(`streams: top candidates for ${imdbId}`)
   for (const score of summaries.slice(0, 5)) {
     console.log(`streams: ${scoreSummary(score)} :: ${score.stream.title || score.stream.name}`)
@@ -476,11 +487,13 @@ export async function fetchRankedEpisodeStreams(
   episode: number,
   expectedYear?: number,
   alternateYear?: number,
+  preferredLanguage = config.preferredAudioLanguage,
+  mediaLanguage = '',
 ): Promise<Stream[]> {
   const streams = await fetchStreamsFromProviders(`/stream/series/${imdbId}:${season}:${episode}.json`)
   if (!streams.length) throw new Error(`No streams found for ${imdbId} S${season}E${episode}`)
-  const ranked = rankStreams(streams, { expectedYear, alternateYear })
-  const summaries = ranked.map(stream => precomputeScore(stream, { expectedYear, alternateYear }))
+  const ranked = rankStreams(streams, { expectedYear, alternateYear, preferredLanguage, mediaLanguage })
+  const summaries = ranked.map(stream => precomputeScore(stream, { expectedYear, alternateYear, preferredLanguage, mediaLanguage }))
   if (!ranked.length) throw new Error(`No year-matched streams found for ${imdbId} S${season}E${episode}`)
   console.log(`streams: top candidates for ${imdbId} S${season}E${episode}`)
   for (const score of summaries.slice(0, 5)) {

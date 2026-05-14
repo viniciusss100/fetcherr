@@ -6,6 +6,7 @@ export interface Movie {
   id:                 number
   tmdbId:             number
   imdbId:             string
+  mediaLanguage:      string
   title:              string
   year:               number
   overview:           string
@@ -29,6 +30,7 @@ export interface Show {
   tmdbId:       number
   imdbId:       string
   tvdbId:       number
+  mediaLanguage: string
   title:        string
   year:         number
   overview:     string
@@ -461,6 +463,8 @@ export function getDb(): Database.Database {
     try { _db.exec(`ALTER TABLE episodes ADD COLUMN community_rating REAL NOT NULL DEFAULT 0`) } catch { /* already exists */ }
     try { _db.exec(`ALTER TABLE movies ADD COLUMN release_date TEXT NOT NULL DEFAULT ''`) } catch { /* already exists */ }
     try { _db.exec(`ALTER TABLE movies ADD COLUMN digital_release_date TEXT NOT NULL DEFAULT ''`) } catch { /* already exists */ }
+    try { _db.exec(`ALTER TABLE movies ADD COLUMN media_language TEXT NOT NULL DEFAULT ''`) } catch { /* already exists */ }
+    try { _db.exec(`ALTER TABLE shows ADD COLUMN media_language TEXT NOT NULL DEFAULT ''`) } catch { /* already exists */ }
     try { _db.exec(`ALTER TABLE music_meta_tracks ADD COLUMN youtube_id TEXT NOT NULL DEFAULT ''`) } catch { /* already exists */ }
     try { _db.exec(`ALTER TABLE music_meta_tracks ADD COLUMN youtube_resolved_at TEXT NOT NULL DEFAULT ''`) } catch { /* already exists */ }
     migrateAppUserRoles(_db)
@@ -637,6 +641,7 @@ function row2movie(r: Record<string, unknown>): Movie {
     id:           r.id            as number,
     tmdbId:       r.tmdb_id       as number,
     imdbId:       r.imdb_id       as string,
+    mediaLanguage:(r.media_language as string) ?? '',
     title:        r.title         as string,
     year:         r.year          as number,
     overview:     r.overview      as string,
@@ -658,10 +663,11 @@ function row2movie(r: Record<string, unknown>): Movie {
 
 export function upsertMovie(m: Omit<Movie, 'id'>): void {
   getDb().prepare(`
-    INSERT INTO movies (tmdb_id, imdb_id, title, year, overview, poster_path, backdrop_path, logo_path, genres, runtime_mins, popularity, official_rating, community_rating, studios_json, tags_json, release_date, digital_release_date, synced_at)
-    VALUES (@tmdbId, @imdbId, @title, @year, @overview, @posterPath, @backdropPath, @logoPath, @genres, @runtimeMins, @popularity, @officialRating, @communityRating, @studiosJson, @tagsJson, @releaseDate, @digitalReleaseDate, COALESCE(NULLIF(@syncedAt, ''), strftime('%Y-%m-%dT%H:%M:%SZ','now')))
+    INSERT INTO movies (tmdb_id, imdb_id, media_language, title, year, overview, poster_path, backdrop_path, logo_path, genres, runtime_mins, popularity, official_rating, community_rating, studios_json, tags_json, release_date, digital_release_date, synced_at)
+    VALUES (@tmdbId, @imdbId, @mediaLanguage, @title, @year, @overview, @posterPath, @backdropPath, @logoPath, @genres, @runtimeMins, @popularity, @officialRating, @communityRating, @studiosJson, @tagsJson, @releaseDate, @digitalReleaseDate, COALESCE(NULLIF(@syncedAt, ''), strftime('%Y-%m-%dT%H:%M:%SZ','now')))
     ON CONFLICT(tmdb_id) DO UPDATE SET
       imdb_id              = excluded.imdb_id,
+      media_language       = excluded.media_language,
       title                = excluded.title,
       year                 = excluded.year,
       overview             = excluded.overview,
@@ -1014,6 +1020,11 @@ export function getMovieByTmdbId(tmdbId: number): Movie | null {
   return r ? row2movie(r as Record<string, unknown>) : null
 }
 
+export function getMovieByImdbId(imdbId: string): Movie | null {
+  const r = getDb().prepare(`SELECT * FROM movies WHERE imdb_id = ? LIMIT 1`).get(imdbId)
+  return r ? row2movie(r as Record<string, unknown>) : null
+}
+
 // ── Shows ─────────────────────────────────────────────────────────────────────
 
 function row2show(r: Record<string, unknown>): Show {
@@ -1022,6 +1033,7 @@ function row2show(r: Record<string, unknown>): Show {
     tmdbId:       r.tmdb_id       as number,
     imdbId:       r.imdb_id       as string,
     tvdbId:       (r.tvdb_id as number) ?? 0,
+    mediaLanguage:(r.media_language as string) ?? '',
     title:        r.title         as string,
     year:         r.year          as number,
     overview:     r.overview      as string,
@@ -1042,11 +1054,12 @@ function row2show(r: Record<string, unknown>): Show {
 
 export function upsertShow(s: Omit<Show, 'id'>): void {
   getDb().prepare(`
-    INSERT INTO shows (tmdb_id, imdb_id, tvdb_id, title, year, overview, poster_path, backdrop_path, logo_path, genres, status, num_seasons, popularity, official_rating, community_rating, studios_json, tags_json, synced_at)
-    VALUES (@tmdbId, @imdbId, @tvdbId, @title, @year, @overview, @posterPath, @backdropPath, @logoPath, @genres, @status, @numSeasons, @popularity, @officialRating, @communityRating, @studiosJson, @tagsJson, COALESCE(NULLIF(@syncedAt, ''), strftime('%Y-%m-%dT%H:%M:%SZ','now')))
+    INSERT INTO shows (tmdb_id, imdb_id, tvdb_id, media_language, title, year, overview, poster_path, backdrop_path, logo_path, genres, status, num_seasons, popularity, official_rating, community_rating, studios_json, tags_json, synced_at)
+    VALUES (@tmdbId, @imdbId, @tvdbId, @mediaLanguage, @title, @year, @overview, @posterPath, @backdropPath, @logoPath, @genres, @status, @numSeasons, @popularity, @officialRating, @communityRating, @studiosJson, @tagsJson, COALESCE(NULLIF(@syncedAt, ''), strftime('%Y-%m-%dT%H:%M:%SZ','now')))
     ON CONFLICT(tmdb_id) DO UPDATE SET
       imdb_id      = excluded.imdb_id,
       tvdb_id      = excluded.tvdb_id,
+      media_language = excluded.media_language,
       title        = excluded.title,
       year         = excluded.year,
       overview     = excluded.overview,
