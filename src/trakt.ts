@@ -563,13 +563,13 @@ export async function syncTraktList(
   for (const item of items) {
     if (item.type === 'movie' && item.movie?.ids?.tmdb) {
       movieTmdbIds.push(item.movie.ids.tmdb)
-      const m = await fetchMovieByTmdbId(item.movie.ids.tmdb, item.listed_at)
+    const m = await fetchMovieByTmdbId(item.movie.ids.tmdb, item.listed_at, { forceRefresh: true })
       if (m) movies++
     } else if (item.type === 'show' && item.show?.ids?.tmdb) {
       const tmdbId = item.show.ids.tmdb
       const isNewToLibrary = !hasAnySourceItem('show', tmdbId)
       showTmdbIds.push(tmdbId)
-      const s = await fetchShowByTmdbId(tmdbId, item.listed_at)
+      const s = await fetchShowByTmdbId(tmdbId, item.listed_at, { forceRefresh: true })
       if (s && isNewToLibrary && config.showAddDefaultMode === 'latest') {
         upsertManualShowSubscription(tmdbId, 'latest', 0)
       }
