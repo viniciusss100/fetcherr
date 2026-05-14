@@ -2006,6 +2006,27 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
   app.get('/Search/Hints', async (req, reply) => handleSearchHints(req as never, reply as never))
   app.get('/Users/:id/Search/Hints', async (req, reply) => handleSearchHints(req as never, reply as never))
 
+  function emptyLibraryResult(req: { query?: Record<string, string> }) {
+    const startIndexRaw = req.query?.startindex ?? req.query?.StartIndex ?? '0'
+    const startIndex = Number.parseInt(String(startIndexRaw), 10)
+    return {
+      Items: [],
+      TotalRecordCount: 0,
+      StartIndex: Number.isFinite(startIndex) ? startIndex : 0,
+    }
+  }
+
+  app.get('/Persons', async (req) => emptyLibraryResult(req as never))
+  app.get('/Users/:id/Persons', async (req) => emptyLibraryResult(req as never))
+  app.get('/Artists', async (req) => emptyLibraryResult(req as never))
+  app.get('/Users/:id/Artists', async (req) => emptyLibraryResult(req as never))
+  app.get('/Artists/AlbumArtists', async (req) => emptyLibraryResult(req as never))
+  app.get('/Users/:id/Artists/AlbumArtists', async (req) => emptyLibraryResult(req as never))
+  app.get('/Genres', async (req) => emptyLibraryResult(req as never))
+  app.get('/Users/:id/Genres', async (req) => emptyLibraryResult(req as never))
+  app.get('/Studios', async (req) => emptyLibraryResult(req as never))
+  app.get('/Users/:id/Studios', async (req) => emptyLibraryResult(req as never))
+
   app.get('/Shows/NextUp', async (req, reply) => {
     const user = requireRequestUser(req.headers, reply as never)
     if (!user) return
