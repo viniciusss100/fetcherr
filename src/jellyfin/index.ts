@@ -145,6 +145,12 @@ function normalizePlaybackItemId(itemId: string): string {
   return stremioSearch?.itemId ?? itemId
 }
 
+function isStremioSearchCatalogItem(item: unknown): boolean {
+  if (!item || typeof item !== 'object') return false
+  const providerIds = (item as { ProviderIds?: Record<string, unknown> }).ProviderIds
+  return !!providerIds && typeof providerIds.Stremio === 'string'
+}
+
 function stremioSeasonToId(series: StremioMeta, seasonNumber: number): string {
   const hash = createHash('md5').update(`stremio-season:${series.id}:${seasonNumber}`).digest('hex')
   const id = `00000000-0000-4000-8008-${hash.slice(-12)}`
@@ -392,7 +398,6 @@ function stremioSearchMetaToItem(meta: StremioMeta, mediaType: StremioMediaType,
   const name = stremioMetaName(meta)
   const genres = meta.genres ?? meta.genre ?? []
   const runtimeTicks = stremioRuntimeTicks(meta, mediaType === 'movie' ? 90 : 45)
-  const path = `gelato://stub/${meta.id}`
   const primaryTag = meta.poster ? createHash('md5').update(meta.poster).digest('hex') : undefined
   const logoTag = meta.logo ? createHash('sha1').update(meta.logo).digest('hex').slice(0, 16) : undefined
   const isMovie = mediaType === 'movie'
@@ -411,9 +416,11 @@ function stremioSearchMetaToItem(meta: StremioMeta, mediaType: StremioMediaType,
     Type:               isMovie ? 'Movie' : 'Series',
     MediaType:          isMovie ? 'Video' : undefined,
     VideoType:          isMovie ? 'VideoFile' : undefined,
-    LocationType:       'Remote',
+    LocationType:       'Virtual',
+    PlayAccess:         'None',
+    IsPlayable:         false,
     CanDelete:          false,
-    CanDownload:        isMovie,
+    CanDownload:        false,
     ChannelId:          null,
     ProductionYear:     year,
     Overview:           meta.overview || meta.description,
@@ -428,7 +435,6 @@ function stremioSearchMetaToItem(meta: StremioMeta, mediaType: StremioMediaType,
     Etag:               createHash('md5').update(`stremio:etag:${mediaType}:${meta.id}`).digest('hex'),
     DisplayPreferencesId: createHash('md5').update(`stremio:display:${mediaType}:${meta.id}`).digest('hex'),
     IsFolder:           !isMovie,
-    Path:               path,
     EnableMediaSourceDisplay: isMovie ? true : undefined,
     Chapters:           isMovie ? [] : undefined,
     LocalTrailerCount:  isMovie ? 0 : undefined,
@@ -451,39 +457,14 @@ function stremioSearchMetaToItem(meta: StremioMeta, mediaType: StremioMediaType,
     PrimaryImageAspectRatio: primaryTag ? 0.6666666666666666 : undefined,
     ImageBlurHashes:    primaryTag ? { Primary: { [primaryTag]: 'L00000fQfQ00fQfQfQfQ~qj[j[fQ' } } : { Primary: {} },
     BackdropImageTags:  [],
-    ParentId:           null,
+    ParentId:           isMovie ? FOLDER_ID : SHOWS_FOLDER_ID,
     ProviderIds:        {
       ...(meta.id.startsWith('tmdb:') ? { Tmdb: meta.id.slice(5) } : {}),
       Stremio: meta.id,
     },
-    MediaSources:       isMovie ? [{
-      Protocol:             'Http',
-      Id:                   sourceId,
-      Type:                 'Default',
-      Name:                 name,
-      Path:                 path,
-      IsRemote:             false,
-      SupportsTranscoding:  true,
-      SupportsDirectStream: true,
-      SupportsDirectPlay:   true,
-      SupportsProbing:      true,
-      HasSegments:          false,
-      VideoType:            'VideoFile',
-      MediaStreams:         [],
-      MediaAttachments:     [],
-      RequiredHttpHeaders:  {},
-      Formats:              [],
-      ReadAtNativeFramerate: false,
-      GenPtsInput:          false,
-      IgnoreDts:            false,
-      IgnoreIndex:          false,
-      RequiresLooping:      false,
-      TranscodingSubProtocol: 'http',
-      UseMostCompatibleTranscodingProfile: false,
-      IsInfiniteStream:     false,
-      RequiresOpening:      false,
-      RequiresClosing:      false,
-    }] : undefined,
+    MediaSources:       undefined,
+    Path:               undefined,
+    UserData:           userDataForItem(id, { played: false, playCount: 0, positionTicks: 0, lastPlayedDate: '' }),
   }
 }
 
@@ -2093,7 +2074,13 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
         const item = await handleItem(id, {
           code: () => ({ send: () => null }),
         }, user)
-        if (item && typeof item === 'object' && (item as Record<string, unknown>).Type !== 'Season' && (item as Record<string, unknown>).Type !== 'Series') {
+        if (
+          item &&
+          typeof item === 'object' &&
+          (item as Record<string, unknown>).Type !== 'Season' &&
+          (item as Record<string, unknown>).Type !== 'Series' &&
+          !isStremioSearchCatalogItem(item)
+        ) {
           items.push(item)
         }
       }
