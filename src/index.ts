@@ -1,6 +1,6 @@
 import { Readable } from 'node:stream'
 import Fastify from 'fastify'
-import { collectStreamProviderUrls, config, normalizeSootioUrl, parseAudioLanguage, parseBooleanSetting, parseEnglishStreamMode, parseMdblistLists, parseMovieReleaseMode, parseMusicAddonUrls, parseShowAddDefaultMode, parseStreamProviderUrls, parseTraktLists } from './config.js'
+import { config, normalizeSootioUrl, normalizeTmdbLanguage, parseAudioLanguage, parseBooleanSetting, parseEnglishStreamMode, parseMdblistLists, parseMovieReleaseMode, parseMusicAddonUrls, parseShowAddDefaultMode, parseStreamProviderUrls, parseTraktLists } from './config.js'
 import { getDb, getAllSettings } from './db.js'
 import { jellyfinRoutes, resolveJellyfinUser } from './jellyfin/index.js'
 import { uiRoutes } from './ui/routes.js'
@@ -8,19 +8,18 @@ import { wrapFastifyLogger } from './logger.js'
 import { markSyncComplete } from './sync-state.js'
 import { cleanupRemovedTraktListSources, syncTraktWatchlist, syncTraktShowsWatchlist, syncTraktList, syncTraktWatchedStatus, startDeviceAuth, tokenStatus } from './trakt.js'
 import { cleanupRemovedMdblistListSources, normalizeMdblistListUrls, syncMdblistList } from './mdblist.js'
-import { fetchRankedStreams, fetchRankedEpisodeStreams, fetchRankedStremioStreams, extractHashFromStream, summarizeStreamForLog, type StremioMediaType } from './sootio.js'
+import { fetchRankedStreams, fetchRankedEpisodeStreams, extractHashFromStream, summarizeStreamForLog } from './sootio.js'
 import { resolveStream, probeAudioLanguages, NotCachedError, ProviderUnavailableError, type ResolvedStream } from './rd.js'
 import {
   markPlaybackStarted as markTorBoxPlaybackStarted,
   resolveStream as tbResolveStream,
-  rehydrateTorBoxCleanupJobs,
   touchDownloadUrl as touchTorBoxDownloadUrl,
 } from './torbox.js'
-import { getShowByImdbId, getEpisodesForSeason, getLatestSeasonNumberForShow, listLatestSeasonShowSubscriptions, listMovies, listShows, pruneAllOrphanedMovies, pruneAllOrphanedShows, removeSourceKey, upsertManualShowSubscription } from './db.js'
+import { getMovieByTmdbId, getShowByImdbId, getEpisodesForSeason, getLatestSeasonNumberForShow, listLatestSeasonShowSubscriptions, listMovies, listShows, pruneAllOrphanedMovies, pruneAllOrphanedShows, removeSourceKey, upsertManualShowSubscription } from './db.js'
 import { ensureShowSeasonsCached, refreshShowMetadataIfNeeded, refreshMovieMetadataIfNeeded } from './tmdb.js'
 import { getSessionUser, getTokenFromCookie, isUiAuthConfigured, isValidSession } from './ui/auth.js'
 import { verifySignedPlaybackPath } from './play-auth.js'
-import { hasAudioLanguage, hasNonPreferredAudioMarker, hasPreferredAudioMarker } from './streamLanguage.js'
+import { hasEnglishAudioMarker, hasNonEnglishAudioMarker } from './streamLanguage.js'
 
 const app = Fastify({
   logger: { level: 'info' },
@@ -76,13 +75,7 @@ getDb()
   if (s.musicAddonUrls != null) config.musicAddonUrls = parseMusicAddonUrls(s.musicAddonUrls)
   if (s.preferredAudioLanguage != null) config.preferredAudioLanguage = parseAudioLanguage(s.preferredAudioLanguage)
   if (s.englishStreamMode != null) config.englishStreamMode = parseEnglishStreamMode(s.englishStreamMode)
-  config.stremioSearchProviderUrls = collectStreamProviderUrls(
-    s.rdStreamProviderUrls ?? '',
-    s.torBoxStreamProviderUrls ?? '',
-    s.streamProviderUrls ?? '',
-    config.sootioUrl,
-    config.stremioSearchProviderUrls.join('\n'),
-  )
+  if (s.tmdbLanguage != null) config.tmdbLanguage = normalizeTmdbLanguage(s.tmdbLanguage)
   const activeDebridProvider = s.activeDebridProvider === 'tb'
     ? 'tb'
     : config.torBoxApiKey && !config.rdApiKey
@@ -96,8 +89,6 @@ getDb()
     config.streamProviderUrls = parseStreamProviderUrls(s.rdStreamProviderUrls ?? s.streamProviderUrls ?? config.streamProviderUrls.join('\n'))
   }
 }
-
-rehydrateTorBoxCleanupJobs()
 
 // Wrap Fastify logger so UI log viewer captures it
 wrapFastifyLogger(app)
@@ -266,12 +257,9 @@ function prewarmPlayback(playPath: string, label: string): void {
     return
   }
 
-  const stremioMatch = playPath.match(/^\/play\/stremio\/(movie|series)\/(.+)$/)
   const episodeMatch = playPath.match(/^\/play\/([^/]+)\/(\d+)\/(\d+)$/)
   const movieMatch = playPath.match(/^\/play\/([^/]+)$/)
-  const resolver = stremioMatch
-    ? () => resolveStremioPlayback(stremioMatch[1] as StremioMediaType, decodeURIComponent(stremioMatch[2]))
-    : episodeMatch
+  const resolver = episodeMatch
     ? () => resolveEpisodePlayback(episodeMatch[1], Number.parseInt(episodeMatch[2], 10), Number.parseInt(episodeMatch[3], 10))
     : movieMatch
       ? () => resolveMoviePlayback(movieMatch[1])
@@ -442,20 +430,18 @@ function streamFilenameHint(stream: { behaviorHints?: Record<string, unknown> })
   return typeof filename === 'string' && filename.trim() ? filename : undefined
 }
 
-function streamClearlyPreferredLanguage(stream: { name?: string; title?: string; description?: string; behaviorHints?: Record<string, unknown> }): boolean {
+function streamClearlyEnglish(stream: { name?: string; title?: string; description?: string; behaviorHints?: Record<string, unknown> }): boolean {
   const text = streamMetadataText(stream)
-  const preferredLanguage = config.preferredAudioLanguage
-  const hasPreferred = hasPreferredAudioMarker(text, preferredLanguage)
-  const hasNonPreferred = hasNonPreferredAudioMarker(text, preferredLanguage)
-  return hasPreferred && !hasNonPreferred
+  const hasEnglish = hasEnglishAudioMarker(text)
+  const hasNonEnglish = hasNonEnglishAudioMarker(text)
+  return hasEnglish && !hasNonEnglish
 }
 
-function streamClearlyNonPreferredLanguage(stream: { name?: string; title?: string; description?: string; behaviorHints?: Record<string, unknown> }): boolean {
+function streamClearlyNonEnglish(stream: { name?: string; title?: string; description?: string; behaviorHints?: Record<string, unknown> }): boolean {
   const text = streamMetadataText(stream)
-  const preferredLanguage = config.preferredAudioLanguage
-  const hasPreferred = hasPreferredAudioMarker(text, preferredLanguage)
-  const hasNonPreferred = hasNonPreferredAudioMarker(text, preferredLanguage)
-  return hasNonPreferred && !hasPreferred
+  const hasEnglish = hasEnglishAudioMarker(text)
+  const hasNonEnglish = hasNonEnglishAudioMarker(text)
+  return hasNonEnglish && !hasEnglish
 }
 
 function streamClearlyUsenetBacked(stream: { name?: string; title?: string; description?: string; behaviorHints?: Record<string, unknown> }): boolean {
@@ -534,15 +520,21 @@ async function resolveDirectPlaybackUrl(url: string): Promise<string> {
   }
 }
 
-function shouldProbePreferredAudio(
+function shouldProbeEnglishAudio(
   stream: { name?: string; title?: string; description?: string; behaviorHints?: Record<string, unknown> },
   filename: string,
 ): boolean {
   if (config.englishStreamMode !== 'require') return false
-  if (streamClearlyPreferredLanguage(stream)) return false
-  if (streamClearlyNonPreferredLanguage(stream)) return false
+  if (streamClearlyEnglish(stream)) return false
+  if (streamClearlyNonEnglish(stream)) return false
   if (isRemoteAudioProbeUnreliable(filename)) return false
   return true
+}
+
+function hasEnglishAudio(languages: string[]): boolean {
+  return languages.some(lang =>
+    /^(en|eng|english)$/.test(lang) || /\beng(lish)?\b/.test(lang),
+  )
 }
 
 function hasOnlyUndeterminedAudio(languages: string[]): boolean {
@@ -566,7 +558,6 @@ async function resolvePlayableStream(
   label: string,
   cacheKey: string,
   fileHint?: string,
-  allowDirectUrls = false,
 ): Promise<PlayResolution> {
   if (config.rdApiKey || config.torBoxApiKey) {
     let rdTransientFailures = 0
@@ -597,36 +588,12 @@ async function resolvePlayableStream(
       const hash = extractHashFromStream(stream)
       const hashLabel = hash ? hash.slice(0, 8) : 'direct-url'
       try {
-        if (config.englishStreamMode === 'require' && streamClearlyNonPreferredLanguage(stream)) {
-          app.log.info(`play: skipping stream metadata for ${label}, clearly not the preferred language`)
+        if (config.englishStreamMode === 'require' && streamClearlyNonEnglish(stream)) {
+          app.log.info(`play: skipping stream metadata for ${label}, clearly non-English`)
           continue
         }
 
         const hint = streamFilenameHint(stream) ?? fileHint
-        if (allowDirectUrls && isDirectPlaybackUrl(stream.url)) {
-          const directFilename = hint ?? filenameFromDirectPlaybackUrl(stream.url)
-          if (directFilename && !isVideoFile(directFilename)) {
-            app.log.info(`play: skipping non-video direct stream ${directFilename}, trying next`)
-            continue
-          }
-          if (directFilename && isLikelyBadResolvedFilename(directFilename)) {
-            app.log.info(`play: skipping suspicious direct stream ${directFilename}, trying next`)
-            continue
-          }
-          if (
-            directFilename
-            && config.englishStreamMode === 'require'
-            && isRemoteAudioProbeUnreliable(directFilename)
-            && !streamClearlyPreferredLanguage(stream)
-          ) {
-            app.log.info(`play: skipping unprobeable ${directFilename}, no confirmed preferred-language metadata`)
-            continue
-          }
-          app.log.info(`play: direct stream selected for ${label}${directFilename ? ` → ${directFilename}` : ''}`)
-          clearFailedPlay(cacheKey)
-          return { url: stream.url, filename: directFilename, provider: isTorBoxCdnUrl(stream.url ?? '') ? 'TorBox' : undefined }
-        }
-
         if (!hash) {
           if (!config.torBoxApiKey || config.directPlaybackMode !== 'all' || !isDirectPlaybackUrl(stream.url)) {
             app.log.info(`play: skipping ${providerLabel} for ${label}, no torrent hash exposed; ${summarizeStreamForLog(stream)}`)
@@ -646,22 +613,22 @@ async function resolvePlayableStream(
             directFilename
             && config.englishStreamMode === 'require'
             && isRemoteAudioProbeUnreliable(directFilename)
-            && !streamClearlyPreferredLanguage(stream)
+            && !streamClearlyEnglish(stream)
           ) {
-            app.log.info(`play: skipping unprobeable ${directFilename}, no confirmed preferred-language metadata`)
+            app.log.info(`play: skipping unprobeable ${directFilename}, no confirmed English metadata`)
             continue
           }
           const isDebridCachedStream = /\[rd\+\]|\[rd ⚡\]|\[rd⚡\]|\brd\+\b|\[tb\+\]|\[tb ⚡\]|\[tb⚡\]|\btb\+\b/.test(streamMetadataText(stream))
           // Skip ffprobe for debrid-cached streams — their proxy URLs will be resolved to
           // CDN URLs at play-time; probing here would waste a TorBox add/delete cycle.
-          if (!isDebridCachedStream && directFilename && shouldProbePreferredAudio(stream, directFilename)) {
+          if (!isDebridCachedStream && directFilename && shouldProbeEnglishAudio(stream, directFilename)) {
             try {
               const audioLanguages = await probeAudioLanguages(stream.url)
               app.log.info(`play: ffprobe audio languages for ${directFilename}: ${audioLanguages.join(', ') || 'none'}`)
               const noLanguageInfo = audioLanguages.length === 0
-              const allowsUndetermined = (hasOnlyUndeterminedAudio(audioLanguages) || noLanguageInfo) && !streamClearlyNonPreferredLanguage(stream)
-              if (config.englishStreamMode === 'require' && !hasAudioLanguage(audioLanguages, config.preferredAudioLanguage) && !allowsUndetermined) {
-                app.log.info(`play: skipping ${directFilename}, no preferred audio detected`)
+              const allowsUndetermined = (hasOnlyUndeterminedAudio(audioLanguages) || noLanguageInfo) && !streamClearlyNonEnglish(stream)
+              if (config.englishStreamMode === 'require' && !hasEnglishAudio(audioLanguages) && !allowsUndetermined) {
+                app.log.info(`play: skipping ${directFilename}, no English audio detected`)
                 continue
               }
             } catch (err) {
@@ -789,22 +756,22 @@ async function resolvePlayableStream(
         if (
           config.englishStreamMode === 'require'
           && isRemoteAudioProbeUnreliable(resolved.filename)
-          && !streamClearlyPreferredLanguage(stream)
+          && !streamClearlyEnglish(stream)
         ) {
-          app.log.info(`play: skipping unprobeable ${resolved.filename}, no confirmed preferred-language metadata`)
+          app.log.info(`play: skipping unprobeable ${resolved.filename}, no confirmed English metadata`)
           continue
         }
-        if (shouldProbePreferredAudio(stream, resolved.filename)) {
+        if (shouldProbeEnglishAudio(stream, resolved.filename)) {
           try {
             const audioLanguages = await probeAudioLanguages(resolved.url)
             app.log.info(`play: ffprobe audio languages for ${resolved.filename}: ${audioLanguages.join(', ') || 'none'}`)
             const noLanguageInfo = audioLanguages.length === 0
-            const allowsUndetermined = (hasOnlyUndeterminedAudio(audioLanguages) || noLanguageInfo) && !streamClearlyNonPreferredLanguage(stream)
-            if (config.englishStreamMode === 'require' && !hasAudioLanguage(audioLanguages, config.preferredAudioLanguage) && !allowsUndetermined) {
-              app.log.info(`play: skipping ${resolved.filename}, no preferred audio detected`)
+            const allowsUndetermined = (hasOnlyUndeterminedAudio(audioLanguages) || noLanguageInfo) && !streamClearlyNonEnglish(stream)
+            if (config.englishStreamMode === 'require' && !hasEnglishAudio(audioLanguages) && !allowsUndetermined) {
+              app.log.info(`play: skipping ${resolved.filename}, no English audio detected`)
               continue
-            }
-          } catch (err) {
+          }
+        } catch (err) {
             app.log.warn(`play: ffprobe failed for ${resolved.filename}: ${summarizeProbeError(err)}`)
           }
         }
@@ -825,7 +792,7 @@ async function resolvePlayableStream(
     )
   }
   const best = config.englishStreamMode === 'require'
-    ? (streams.find(stream => streamClearlyPreferredLanguage(stream)) ?? streams.find(stream => !streamClearlyNonPreferredLanguage(stream)))
+    ? (streams.find(stream => streamClearlyEnglish(stream)) ?? streams.find(stream => !streamClearlyNonEnglish(stream)))
     : streams[0]
   if (!best?.url) {
     cacheFailedPlay(cacheKey, 'No streams found')
@@ -844,12 +811,6 @@ async function resolveMoviePlayback(imdbId: string): Promise<PlayResolution> {
   const playPath = `/play/${imdbId}`
   const streams = await fetchRankedStreams(imdbId)
   return resolvePlayableStream(streams, imdbId, playPath)
-}
-
-async function resolveStremioPlayback(mediaType: StremioMediaType, externalId: string): Promise<PlayResolution> {
-  const playPath = `/play/stremio/${mediaType}/${encodeURIComponent(externalId)}`
-  const streams = await fetchRankedStremioStreams(mediaType, externalId)
-  return resolvePlayableStream(streams, `${mediaType} ${externalId}`, playPath, undefined, true)
 }
 
 async function resolveEpisodePlayback(imdbId: string, season: number, episodeNumber: number): Promise<PlayResolution> {
@@ -904,43 +865,6 @@ app.get('/play/:imdbId', async (req, reply) => {
       return reply.code(err.statusCode).send(err.response)
     }
     app.log.warn(`play: no stream for ${imdbId}: ${err}`)
-    cacheFailedPlay(playPath, 'No streams found')
-    return reply.code(404).send({ error: 'No stream available', message: 'No Streams Found' })
-  }
-})
-
-app.get('/play/stremio/:mediaType/:externalId', async (req, reply) => {
-  const { mediaType, externalId } = req.params as { mediaType: StremioMediaType; externalId: string }
-  if (mediaType !== 'movie' && mediaType !== 'series') return reply.code(404).send({ error: 'Not found' })
-  const query = req.query as { token?: string; expires?: string } | undefined
-  const decodedExternalId = decodeURIComponent(externalId)
-  const playPath = `/play/stremio/${mediaType}/${encodeURIComponent(decodedExternalId)}`
-  if (!verifySignedPlaybackPath(playPath, query?.token, query?.expires)) {
-    if (!requestPlaybackUser(req.headers)) {
-      app.log.warn(`play: rejected unauthenticated Stremio playback request for ${mediaType} ${decodedExternalId}`)
-    } else {
-      app.log.warn(`play: rejected unsigned or expired Stremio playback request for ${mediaType} ${decodedExternalId}`)
-    }
-    return reply.code(401).send({ error: 'Unauthorized' })
-  }
-  const failedReason = getFailedPlayReason(playPath)
-  if (failedReason) {
-    app.log.info(`play: cached miss for Stremio ${mediaType} ${decodedExternalId} (${failedReason})`)
-    return reply.code(404).send({ error: failedReason, message: 'No Streams Found' })
-  }
-  try {
-    const label = `Stremio ${mediaType} ${decodedExternalId}`
-    const { promise, reused } = getOrCreatePlaybackResolution(playPath, label, () => resolveStremioPlayback(mediaType, decodedExternalId))
-    if (reused) app.log.info(`play: using in-flight resolver for ${label}`)
-    const resolved = await promise
-    rememberTorBoxPlaybackUrl(playPath, resolved)
-    if (resolved.provider === 'TorBox' && isTorBoxCdnUrl(resolved.url)) return proxyTorBoxStream(resolved, req, reply as never)
-    return reply.redirect(resolved.url, 302)
-  } catch (err) {
-    if (err instanceof PlaybackResolutionError) {
-      return reply.code(err.statusCode).send(err.response)
-    }
-    app.log.warn(`play: no Stremio stream for ${mediaType} ${decodedExternalId}: ${err}`)
     cacheFailedPlay(playPath, 'No streams found')
     return reply.code(404).send({ error: 'No stream available', message: 'No Streams Found' })
   }
