@@ -140,6 +140,11 @@ function idToStremioSearchMeta(id: string): { meta: StremioMeta; mediaType: Stre
   return { meta: cached.meta, mediaType: cached.mediaType, itemId: cached.itemId, sourceId: cached.sourceId, requestedId: id }
 }
 
+function normalizePlaybackItemId(itemId: string): string {
+  const stremioSearch = idToStremioSearchMeta(itemId)
+  return stremioSearch?.itemId ?? itemId
+}
+
 function stremioSeasonToId(series: StremioMeta, seasonNumber: number): string {
   const hash = createHash('md5').update(`stremio-season:${series.id}:${seasonNumber}`).digest('hex')
   const id = `00000000-0000-4000-8008-${hash.slice(-12)}`
@@ -2500,9 +2505,13 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     const itemId       = body?.ItemId       as string | undefined
     const positionTicks = body?.PositionTicks as number | undefined
     if (itemId && positionTicks != null) {
-      opts.touchPlaybackItem?.(itemId)
-      saveProgress(itemId, positionTicks, user.id)
-      app.log.info(`progress: saved ${itemId} at ${positionTicks} ticks`)
+      const canonicalItemId = normalizePlaybackItemId(itemId)
+      opts.touchPlaybackItem?.(canonicalItemId)
+      saveProgress(canonicalItemId, positionTicks, user.id)
+      if (canonicalItemId !== itemId) {
+        app.log.info(`progress: normalized ${itemId} -> ${canonicalItemId}`)
+      }
+      app.log.info(`progress: saved ${canonicalItemId} at ${positionTicks} ticks`)
     } else {
       app.log.warn(`progress: missing item or position in /Sessions/Playing/Progress payload`)
     }
@@ -2515,9 +2524,13 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     const itemId       = body?.ItemId       as string | undefined
     const positionTicks = body?.PositionTicks as number | undefined
     if (itemId && positionTicks != null) {
-      opts.touchPlaybackItem?.(itemId)
-      saveProgress(itemId, positionTicks, user.id)
-      app.log.info(`progress: saved ${itemId} at ${positionTicks} ticks`)
+      const canonicalItemId = normalizePlaybackItemId(itemId)
+      opts.touchPlaybackItem?.(canonicalItemId)
+      saveProgress(canonicalItemId, positionTicks, user.id)
+      if (canonicalItemId !== itemId) {
+        app.log.info(`progress: normalized ${itemId} -> ${canonicalItemId}`)
+      }
+      app.log.info(`progress: saved ${canonicalItemId} at ${positionTicks} ticks`)
     } else {
       app.log.warn(`progress: missing item or position in /Sessions/Playing/Progress payload`)
     }
@@ -2532,20 +2545,24 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     const bodyRuntimeTicks  = body?.RunTimeTicks       as number  | undefined
     const playedToCompletion = body?.PlayedToCompletion as boolean | undefined
     if (itemId) {
-      opts.stopPlaybackItem?.(itemId)
-      const runtimeTicks = bodyRuntimeTicks ?? runtimeTicksForItem(itemId) ?? undefined
+      const canonicalItemId = normalizePlaybackItemId(itemId)
+      opts.stopPlaybackItem?.(canonicalItemId)
+      const runtimeTicks = bodyRuntimeTicks ?? runtimeTicksForItem(canonicalItemId) ?? undefined
       if (playedToCompletion || reachedCompletionThreshold(positionTicks, runtimeTicks)) {
-        markPlayed(itemId, user.id)
+        markPlayed(canonicalItemId, user.id)
         if (playedToCompletion) {
-          app.log.info(`progress: marked played ${itemId}`)
+          app.log.info(`progress: marked played ${canonicalItemId}`)
         } else {
-          app.log.info(`progress: auto-marked played ${itemId} at ${positionTicks} / ${runtimeTicks} ticks`)
+          app.log.info(`progress: auto-marked played ${canonicalItemId} at ${positionTicks} / ${runtimeTicks} ticks`)
         }
       } else if (positionTicks != null) {
-        saveProgress(itemId, positionTicks, user.id)
-        app.log.info(`progress: stopped ${itemId} at ${positionTicks} ticks`)
+        saveProgress(canonicalItemId, positionTicks, user.id)
+        if (canonicalItemId !== itemId) {
+          app.log.info(`progress: normalized ${itemId} -> ${canonicalItemId}`)
+        }
+        app.log.info(`progress: stopped ${canonicalItemId} at ${positionTicks} ticks`)
       } else {
-        app.log.warn(`progress: missing stop position for ${itemId}`)
+        app.log.warn(`progress: missing stop position for ${canonicalItemId}`)
       }
     }
     return {}
