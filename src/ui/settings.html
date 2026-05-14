@@ -64,7 +64,7 @@
       <div class="provider-actions">
         <button type="button" class="btn btn-sm" onclick="addProviderRow()">+ Add Add-on</button>
       </div>
-      <div class="field-note">Paste one Stremio add-on manifest or base URL per row. Add-ons are saved separately for Real-Debrid and TorBox and also feed Stremio search results.</div>
+      <div class="field-note">Paste one Stremio add-on manifest or base URL per row. Add-ons are saved separately for Real-Debrid and TorBox.</div>
     </div>
     <div class="field">
       <label for="preferredAudioLanguage">Preferred Audio Language</label>
@@ -82,7 +82,7 @@
         <option value="hi">Hindi</option>
         <option value="ar">Arabic</option>
       </select>
-      <div class="field-note">Fetcherr uses this language for stream ranking and ffprobe checks when the provider metadata is ambiguous.</div>
+      <div class="field-note">Fetcherr uses this language for stream ranking and ffprobe checks when provider metadata is ambiguous. For pt-BR, common tags include DUBLADO, PORTUGUES, POR-BR, BRAZILIAN, BREMUX, CYPHER, FREDDIEGELLAR, DUAL-BiOMA, DUAL-C76, TOSSATO, C0RAL, DUAL-NOGROUP, DUAL-PIA, DUAL-XOR, DUAL-XAR, G4RIS, DUAL-SIGMA, ANDREHSA, RIPER, SiGLA, TONTOM, DUAL-ECK, 1-SF, 0-SF, RARBR, TUPAC, ALFAHD, DUAL-CZA, DUAL-7SPRITE7, POTATIN, DUAL-FLY, and FRANCEIRA.</div>
     </div>
     <div class="field">
       <label for="englishStreamMode">Audio Match Mode</label>
@@ -141,6 +141,11 @@
         <button id="tmdbValidateBtn" class="btn btn-sm" onclick="validateTMDB()" hidden>Validate</button>
       </div>
       <div class="field-note">Used for metadata, artwork, and Add to Library search.</div>
+    </div>
+    <div class="field">
+      <label for="tmdbLanguage">TMDB Metadata Language</label>
+      <input id="tmdbLanguage" type="text" placeholder="pt-BR">
+      <div class="field-note">Used for TMDB metadata, artwork, collections, and Add to Library search.</div>
     </div>
   </section>
 
@@ -646,6 +651,7 @@
     setSecretPlaceholder('torBoxApiKey', hasStoredTorBoxApiKey, 'Enter your TorBox API key')
     setSecretPlaceholder('tmdbApiKey', hasStoredTmdbApiKey, 'Enter your TMDB API key')
     setSecretPlaceholder('tvdbApiKey', hasStoredTvdbApiKey, 'Enter your TVDB API key')
+    document.getElementById('tmdbLanguage').value = d.tmdbLanguage || 'pt-BR'
     document.getElementById('serverUrl').value         = d.serverUrl         || ''
     document.getElementById('showAddDefaultMode').value = d.showAddDefaultMode || 'all'
     document.getElementById('movieReleaseMode').value = d.movieReleaseMode || 'digital'
@@ -1024,6 +1030,7 @@
       torBoxStreamProviderUrls: torBoxStreamProviderUrls.join('\n'),
       preferredAudioLanguage: document.getElementById('preferredAudioLanguage').value,
       englishStreamMode: document.getElementById('englishStreamMode').value,
+      tmdbLanguage: document.getElementById('tmdbLanguage').value,
       activeDebridProvider,
       serverUrl:         document.getElementById('serverUrl').value,
       showAddDefaultMode: document.getElementById('showAddDefaultMode').value,
