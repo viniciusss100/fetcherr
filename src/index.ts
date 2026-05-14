@@ -51,6 +51,10 @@ app.addHook('onRequest', async (_req, reply) => {
 // Initialise DB
 getDb()
 
+function mergeProviderUrls(...lists: string[][]): string[] {
+  return [...new Set(lists.flat().map(url => url.trim()).filter(Boolean))]
+}
+
 // Apply any DB-persisted settings on top of env vars
 {
   const s = getAllSettings()
@@ -76,18 +80,9 @@ getDb()
   if (s.preferredAudioLanguage != null) config.preferredAudioLanguage = parseAudioLanguage(s.preferredAudioLanguage)
   if (s.englishStreamMode != null) config.englishStreamMode = parseEnglishStreamMode(s.englishStreamMode)
   if (s.tmdbLanguage != null) config.tmdbLanguage = normalizeTmdbLanguage(s.tmdbLanguage)
-  const activeDebridProvider = s.activeDebridProvider === 'tb'
-    ? 'tb'
-    : config.torBoxApiKey && !config.rdApiKey
-      ? 'tb'
-      : 'rd'
-  if (activeDebridProvider === 'tb') {
-    config.rdApiKey = ''
-    config.streamProviderUrls = parseStreamProviderUrls(s.torBoxStreamProviderUrls ?? '')
-  } else {
-    config.torBoxApiKey = ''
-    config.streamProviderUrls = parseStreamProviderUrls(s.rdStreamProviderUrls ?? s.streamProviderUrls ?? config.streamProviderUrls.join('\n'))
-  }
+  const rdStreamProviderUrls = parseStreamProviderUrls(s.rdStreamProviderUrls ?? s.streamProviderUrls ?? config.streamProviderUrls.join('\n'))
+  const torBoxStreamProviderUrls = parseStreamProviderUrls(s.torBoxStreamProviderUrls ?? '')
+  config.streamProviderUrls = mergeProviderUrls(rdStreamProviderUrls, torBoxStreamProviderUrls)
 }
 
 // Wrap Fastify logger so UI log viewer captures it
@@ -641,7 +636,54 @@ async function resolvePlayableStream(
         const attemptKey = resolutionAttemptKey(hash, hint)
         const normalizedHash = hash.toLowerCase()
 
-        if (config.rdApiKey) {
+        if (config.torBoxApiKey) {
+          const failedReason = failedTorBoxHashes.get(normalizedHash)
+          if (failedReason) {
+            app.log.info(`play: skipping TorBox hash ${hashLabel}… for ${label}, already failed: ${failedReason}`)
+          } else if (attemptedTorBoxResolutions.has(attemptKey)) {
+            app.log.info(`play: skipping duplicate TorBox hash ${hashLabel}… for ${label}`)
+          } else {
+            attemptedTorBoxResolutions.add(attemptKey)
+            try {
+              resolved = await tbResolveStream(hash, hint)
+              provider = 'TorBox'
+            } catch (tbErr) {
+              if (tbErr instanceof NotCachedError) {
+                failedTorBoxHashes.set(normalizedHash, 'not cached')
+                app.log.info(`play: hash ${hashLabel}… not cached on TorBox${config.rdApiKey ? ', trying RD' : ''}`)
+              } else if (tbErr instanceof ProviderUnavailableError) {
+                tbTransientFailures += 1
+                const retryable = !isNonRetryableRdError(tbErr) && tbTransientFailures < MAX_RD_TRANSIENT_FAILURES
+                if (retryable) {
+                  app.log.warn(
+                    `play: TorBox error for providerOrder=${providerOrder} hash ${hashLabel}…: ${tbErr}; ` +
+                    `trying next candidate (${tbTransientFailures}/${MAX_RD_TRANSIENT_FAILURES})`
+                  )
+                } else {
+                  const terminalReason = terminalProviderHashFailureReason(tbErr)
+                  if (terminalReason) failedTorBoxHashes.set(normalizedHash, terminalReason)
+                  app.log.warn(
+                    `play: TorBox unavailable for ${label} after ${tbTransientFailures} failure${tbTransientFailures === 1 ? '' : 's'}: ${tbErr}` +
+                    (config.rdApiKey ? '; falling back to RD' : '; not caching playback miss')
+                  )
+                  if (!config.rdApiKey) {
+                    throw new PlaybackResolutionError(
+                      'Debrid provider unavailable',
+                      503,
+                      { error: 'Debrid provider unavailable', message: 'Debrid Unavailable' },
+                    )
+                  }
+                }
+              } else {
+                const terminalReason = terminalProviderHashFailureReason(tbErr)
+                if (terminalReason) failedTorBoxHashes.set(normalizedHash, terminalReason)
+                app.log.warn(`play: hash ${hashLabel}… TorBox failed: ${tbErr}`)
+              }
+            }
+          }
+        }
+
+        if (!resolved && config.rdApiKey) {
           const failedReason = failedRdHashes.get(normalizedHash)
           if (failedReason) {
             app.log.info(`play: skipping RD hash ${hashLabel}… for ${label}, already failed: ${failedReason}`)
@@ -685,55 +727,6 @@ async function resolvePlayableStream(
                 app.log.warn(`play: hash ${hashLabel}… RD failed: ${rdErr}`)
               }
             }
-          }
-        }
-
-        if (!resolved && config.torBoxApiKey) {
-          const failedReason = failedTorBoxHashes.get(normalizedHash)
-          if (failedReason) {
-            app.log.info(`play: skipping TorBox hash ${hashLabel}… for ${label}, already failed: ${failedReason}`)
-            continue
-          }
-          if (attemptedTorBoxResolutions.has(attemptKey)) {
-            app.log.info(`play: skipping duplicate TorBox hash ${hashLabel}… for ${label}`)
-            continue
-          }
-          attemptedTorBoxResolutions.add(attemptKey)
-          try {
-            resolved = await tbResolveStream(hash, hint)
-            provider = 'TorBox'
-          } catch (tbErr) {
-            if (tbErr instanceof NotCachedError) {
-              failedTorBoxHashes.set(normalizedHash, 'not cached')
-              app.log.info(`play: hash ${hashLabel}… not cached on TorBox, trying next`)
-              continue
-            }
-            if (tbErr instanceof ProviderUnavailableError) {
-              tbTransientFailures += 1
-              const retryable = !isNonRetryableRdError(tbErr) && tbTransientFailures < MAX_RD_TRANSIENT_FAILURES
-              if (retryable) {
-                app.log.warn(
-                  `play: TorBox error for providerOrder=${providerOrder} hash ${hashLabel}…: ${tbErr}; ` +
-                  `trying next candidate (${tbTransientFailures}/${MAX_RD_TRANSIENT_FAILURES})`
-                )
-                continue
-              }
-              const terminalReason = terminalProviderHashFailureReason(tbErr)
-              if (terminalReason) failedTorBoxHashes.set(normalizedHash, terminalReason)
-              app.log.warn(
-                `play: TorBox unavailable for ${label} after ${tbTransientFailures} failure${tbTransientFailures === 1 ? '' : 's'}: ${tbErr}; ` +
-                'not caching playback miss'
-              )
-              throw new PlaybackResolutionError(
-                'Debrid provider unavailable',
-                503,
-                { error: 'Debrid provider unavailable', message: 'Debrid Unavailable' },
-              )
-            }
-            const terminalReason = terminalProviderHashFailureReason(tbErr)
-            if (terminalReason) failedTorBoxHashes.set(normalizedHash, terminalReason)
-            app.log.warn(`play: hash ${hashLabel}… TorBox failed: ${tbErr}; trying next`)
-            continue
           }
         }
 
