@@ -58,6 +58,10 @@ interface StremioCatalogResponse {
   metas?: StremioMeta[]
 }
 
+interface StremioMetaResponse {
+  meta?: StremioMeta
+}
+
 interface StreamRankContext {
   expectedYear?: number
   alternateYear?: number
@@ -427,6 +431,8 @@ async function fetchStreams(url: string): Promise<Stream[]> {
 
 const manifestCache = new Map<string, { expiresAt: number; value: StremioManifest | null }>()
 const MANIFEST_CACHE_TTL_MS = 5 * 60 * 1000
+const stremioMetaCache = new Map<string, { expiresAt: number; value: StremioMeta | null }>()
+const STREMIO_META_CACHE_TTL_MS = 10 * 60 * 1000
 
 async function fetchJson<T>(url: string): Promise<T> {
   const res = await fetch(url, { signal: AbortSignal.timeout(30_000) })
@@ -489,6 +495,38 @@ export async function searchStremioMetas(query: string, types: StremioMediaType[
     }
   }
   return [...deduped.values()]
+}
+
+async function fetchMetaFromProvider(base: string, type: StremioMediaType, id: string): Promise<StremioMeta | null> {
+  const cacheKey = `${base}|${type}|${id}`
+  const cached = stremioMetaCache.get(cacheKey)
+  if (cached && cached.expiresAt > Date.now()) return cached.value
+
+  try {
+    const url = `${base}/meta/${type}/${encodeURIComponent(id)}.json`
+    const json = await fetchJson<StremioMetaResponse>(url)
+    const value = json.meta ? { ...json.meta, type: json.meta.type ?? type } : null
+    stremioMetaCache.set(cacheKey, { value, expiresAt: Date.now() + STREMIO_META_CACHE_TTL_MS })
+    return value
+  } catch {
+    stremioMetaCache.set(cacheKey, { value: null, expiresAt: Date.now() + STREMIO_META_CACHE_TTL_MS })
+    return null
+  }
+}
+
+export async function fetchStremioMetaDetails(id: string, type: StremioMediaType): Promise<StremioMeta | null> {
+  const providers = searchProviderBases()
+  if (!providers.length || !id) return null
+
+  const settled = await Promise.allSettled(providers.map(base => fetchMetaFromProvider(base, type, id)))
+  const metas = settled
+    .filter((result): result is PromiseFulfilledResult<StremioMeta | null> => result.status === 'fulfilled')
+    .map(result => result.value)
+    .filter((meta): meta is StremioMeta => Boolean(meta))
+
+  if (!metas.length) return null
+  const ranked = metas.sort((a, b) => (b.videos?.length ?? 0) - (a.videos?.length ?? 0))
+  return ranked[0]
 }
 
 export function summarizeStreamForLog(s: Stream): string {

@@ -15,7 +15,7 @@ import {
 } from '../tmdb.js'
 import type { Movie, Show, Season, Episode } from '../db.js'
 import { buildPlaybackOrigin, createSignedPlaybackUrl } from '../play-auth.js'
-import { searchStremioMetas, type StremioMediaType, type StremioMeta } from '../sootio.js'
+import { fetchStremioMetaDetails, searchStremioMetas, type StremioMediaType, type StremioMeta } from '../sootio.js'
 
 // ── ID helpers ────────────────────────────────────────────────────────────────
 // Real Jellyfin uses GUIDs for all IDs. Infuse validates this client-side.
@@ -120,6 +120,12 @@ function stremioSearchMetaIds(meta: StremioMeta, mediaType: StremioMediaType): {
 
 function stremioSearchMetaToId(meta: StremioMeta, mediaType: StremioMediaType): string {
   return stremioSearchMetaIds(meta, mediaType).itemId
+}
+
+async function hydrateStremioSeriesMeta(meta: StremioMeta): Promise<StremioMeta> {
+  if ((meta.videos?.length ?? 0) > 0) return meta
+  const hydrated = await fetchStremioMetaDetails(meta.id, 'series')
+  return hydrated ?? meta
 }
 
 function idToStremioSearchMeta(id: string): { meta: StremioMeta; mediaType: StremioMediaType; itemId: string; sourceId: string; requestedId: string } | null {
@@ -2269,10 +2275,12 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     const { seriesId } = req.params as { seriesId: string }
     const stremioSeries = idToStremioSearchMeta(seriesId)
     if (stremioSeries?.mediaType === 'series') {
-      const seasons = [...new Set((stremioSeries.meta.videos ?? [])
+      const meta = await hydrateStremioSeriesMeta(stremioSeries.meta)
+      stremioSearchMetaIds(meta, 'series')
+      const seasons = [...new Set((meta.videos ?? [])
         .map(stremioEpisodeSeasonNumber)
         .filter(num => Number.isFinite(num) && num > 0))].sort((a, b) => a - b)
-      return { Items: seasons.map(seasonNumber => stremioSeasonToItem(stremioSeries.meta, seasonNumber)), TotalRecordCount: seasons.length, StartIndex: 0 }
+      return { Items: seasons.map(seasonNumber => stremioSeasonToItem(meta, seasonNumber)), TotalRecordCount: seasons.length, StartIndex: 0 }
     }
     const searchShowTmdbId = idToSearchShowTmdb(seriesId)
     if (searchShowTmdbId) return { Items: [], TotalRecordCount: 0, StartIndex: 0 }
@@ -2298,15 +2306,17 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     const SeasonId = rawQ.SeasonId ?? rawQ.seasonId ?? rawQ.seasonid
     const stremioSeries = idToStremioSearchMeta(seriesId)
     if (stremioSeries?.mediaType === 'series') {
+      const meta = await hydrateStremioSeriesMeta(stremioSeries.meta)
+      stremioSearchMetaIds(meta, 'series')
       if (SeasonId) {
         const stremioSeasonRef = idToStremioSeason(SeasonId)
         if (!stremioSeasonRef) return { Items: [], TotalRecordCount: 0, StartIndex: 0 }
-        const episodes = (stremioSeries.meta.videos ?? [])
+        const episodes = (meta.videos ?? [])
           .filter(ep => stremioEpisodeSeasonNumber(ep) === stremioSeasonRef.seasonNumber)
-        return { Items: episodes.map(ep => stremioEpisodeToItem(stremioSeries.meta, ep)), TotalRecordCount: episodes.length, StartIndex: 0 }
+        return { Items: episodes.map(ep => stremioEpisodeToItem(meta, ep)), TotalRecordCount: episodes.length, StartIndex: 0 }
       }
-      const allEpisodes = stremioSeries.meta.videos ?? []
-      return { Items: allEpisodes.map(ep => stremioEpisodeToItem(stremioSeries.meta, ep)), TotalRecordCount: allEpisodes.length, StartIndex: 0 }
+      const allEpisodes = meta.videos ?? []
+      return { Items: allEpisodes.map(ep => stremioEpisodeToItem(meta, ep)), TotalRecordCount: allEpisodes.length, StartIndex: 0 }
     }
     const searchShowTmdbId = idToSearchShowTmdb(seriesId)
     if (searchShowTmdbId) return { Items: [], TotalRecordCount: 0, StartIndex: 0 }
