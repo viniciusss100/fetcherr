@@ -18,6 +18,51 @@ export interface Stream {
   providerLabel?: string
 }
 
+export type StremioMediaType = 'movie' | 'series'
+
+export interface StremioMeta {
+  id: string
+  type?: StremioMediaType | string
+  name?: string
+  title?: string
+  poster?: string
+  background?: string
+  logo?: string
+  description?: string
+  overview?: string
+  genres?: string[]
+  genre?: string[]
+  releaseInfo?: string | number
+  year?: string | number
+  imdb_id?: string
+  imdbId?: string
+  runtime?: string
+  released?: string
+  videos?: StremioMeta[]
+  season?: number
+  episode?: number
+  number?: number
+}
+
+interface StremioCatalog {
+  id: string
+  type: string
+  name?: string
+  extra?: Array<{ name?: string; isRequired?: boolean }>
+}
+
+interface StremioManifest {
+  catalogs?: StremioCatalog[]
+}
+
+interface StremioCatalogResponse {
+  metas?: StremioMeta[]
+}
+
+interface StremioMetaResponse {
+  meta?: StremioMeta
+}
+
 interface StreamRankContext {
   expectedYear?: number
   alternateYear?: number
@@ -346,6 +391,12 @@ function providerBases(): string[] {
   return [...new Set(urls)]
 }
 
+function searchProviderBases(): string[] {
+  const urls = [...config.stremioSearchProviderUrls]
+  if (!urls.length) urls.push(...providerBases())
+  return [...new Set(urls)]
+}
+
 function isSensitivePathSegment(segment: string): boolean {
   return segment.length >= 16
     || /^[0-9a-f]{12,}$/i.test(segment)
@@ -372,6 +423,106 @@ async function fetchStreams(url: string): Promise<Stream[]> {
   if (!res.ok) throw new Error(`AIOStreams returned ${res.status}`)
   const json = await res.json() as { streams?: Stream[] }
   return json.streams ?? []
+}
+
+const MANIFEST_CACHE_TTL_MS = 5 * 60 * 1000
+const STREMIO_META_CACHE_TTL_MS = 10 * 60 * 1000
+const manifestCache = new Map<string, { expiresAt: number; value: StremioManifest | null }>()
+const stremioMetaCache = new Map<string, { expiresAt: number; value: StremioMeta | null }>()
+
+async function fetchJson<T>(url: string): Promise<T> {
+  const res = await fetch(url, { signal: AbortSignal.timeout(30_000) })
+  if (!res.ok) throw new Error(`Stremio add-on returned ${res.status}`)
+  return await res.json() as T
+}
+
+async function fetchManifest(base: string): Promise<StremioManifest | null> {
+  const cached = manifestCache.get(base)
+  if (cached && cached.expiresAt > Date.now()) return cached.value
+
+  try {
+    const value = await fetchJson<StremioManifest>(`${base}/manifest.json`)
+    manifestCache.set(base, { value, expiresAt: Date.now() + MANIFEST_CACHE_TTL_MS })
+    return value
+  } catch {
+    manifestCache.set(base, { value: null, expiresAt: Date.now() + MANIFEST_CACHE_TTL_MS })
+    return null
+  }
+}
+
+function searchCatalog(manifest: StremioManifest | null, type: StremioMediaType): StremioCatalog | null {
+  const catalogs = manifest?.catalogs ?? []
+  return catalogs
+    .filter(catalog => catalog.type?.toLowerCase() === type)
+    .filter(catalog => catalog.extra?.some(extra => extra.name?.toLowerCase() === 'search'))
+    .sort((a, b) => Number(a.id.toLowerCase().includes('people')) - Number(b.id.toLowerCase().includes('people')))
+    [0] ?? null
+}
+
+async function fetchSearchMetasFromProvider(base: string, type: StremioMediaType, query: string): Promise<StremioMeta[]> {
+  const manifest = await fetchManifest(base)
+  const catalog = searchCatalog(manifest, type)
+  if (!catalog) return []
+
+  const url = `${base}/catalog/${type}/${encodeURIComponent(catalog.id)}/search=${encodeURIComponent(query)}.json`
+  const json = await fetchJson<StremioCatalogResponse>(url)
+  return (json.metas ?? []).map(meta => ({ ...meta, type: meta.type ?? type }))
+}
+
+export async function searchStremioMetas(query: string, types: StremioMediaType[]): Promise<StremioMeta[]> {
+  const providers = searchProviderBases()
+  if (!providers.length || !query.trim()) return []
+
+  const settled = await Promise.allSettled(
+    providers.flatMap((base, providerIdx) =>
+      types.map(async type => {
+        const metas = await fetchSearchMetasFromProvider(base, type, query)
+        return metas.map(meta => ({ meta, providerIdx }))
+      }),
+    ),
+  )
+
+  const deduped = new Map<string, StremioMeta>()
+  for (const result of settled) {
+    if (result.status !== 'fulfilled') continue
+    for (const { meta, providerIdx } of result.value) {
+      const key = `${String(meta.type ?? '').toLowerCase()}|${meta.id || meta.imdb_id || meta.imdbId}|${meta.name || meta.title}|${providerIdx}`
+      if (!deduped.has(key)) deduped.set(key, meta)
+    }
+  }
+  return [...deduped.values()]
+}
+
+async function fetchMetaFromProvider(base: string, type: StremioMediaType, id: string): Promise<StremioMeta | null> {
+  const cacheKey = `${base}|${type}|${id}`
+  const cached = stremioMetaCache.get(cacheKey)
+  if (cached && cached.expiresAt > Date.now()) return cached.value
+
+  try {
+    const url = `${base}/meta/${type}/${encodeURIComponent(id)}.json`
+    const json = await fetchJson<StremioMetaResponse>(url)
+    const value = json.meta ? { ...json.meta, type: json.meta.type ?? type } : null
+    stremioMetaCache.set(cacheKey, { value, expiresAt: Date.now() + STREMIO_META_CACHE_TTL_MS })
+    return value
+  } catch {
+    stremioMetaCache.set(cacheKey, { value: null, expiresAt: Date.now() + STREMIO_META_CACHE_TTL_MS })
+    return null
+  }
+}
+
+export async function fetchStremioMetaDetails(id: string, type: StremioMediaType): Promise<StremioMeta | null> {
+  const providers = searchProviderBases()
+  if (!providers.length || !id) return null
+
+  const settled = await Promise.allSettled(providers.map(base => fetchMetaFromProvider(base, type, id)))
+  const metas = settled
+    .filter((result): result is PromiseFulfilledResult<StremioMeta | null> => result.status === 'fulfilled')
+    .map(result => result.value)
+    .filter((meta): meta is StremioMeta => Boolean(meta))
+
+  if (!metas.length) return null
+  const ranked = metas.sort((a, b) => (b.videos?.length ?? 0) - (a.videos?.length ?? 0))
+  return ranked[0]
 }
 
 export function summarizeStreamForLog(s: Stream): string {

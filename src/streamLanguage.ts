@@ -52,6 +52,10 @@ export function preferredAudioPenalty(text: string, language: AudioLanguage): nu
   }, 0)
 }
 
+export function nonPreferredAudioPenalty(text: string, language: AudioLanguage): number {
+  return preferredAudioPenalty(text, language)
+}
+
 export function nonEnglishAudioPenalty(text: string): number {
   return preferredAudioPenalty(text, 'en')
 }
