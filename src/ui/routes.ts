@@ -22,7 +22,7 @@ import {
   getSessionCookie, clearSessionCookie, getTokenFromCookie,
 } from './auth.js'
 import { config } from '../config.js'
-import { collectStreamProviderUrls, normalizeSootioUrl, parseAudioLanguage, parseBooleanSetting, parseEnglishStreamMode, parseMdblistLists, parseMovieReleaseMode, parseShowAddDefaultMode, parseStreamProviderUrls, parseTraktLists } from '../config.js'
+import { normalizeSootioUrl, parseBooleanSetting, parseEnglishStreamMode, parseMdblistLists, parseMovieReleaseMode, parseShowAddDefaultMode, parseStreamProviderUrls, parseTraktLists } from '../config.js'
 import { fetchMovieByTmdbId, fetchMovieCollection, fetchShowByTmdbId, ensureShowSeasonsCached } from '../tmdb.js'
 import { cleanupRemovedTraktListSources, fetchTraktUserLists } from '../trakt.js'
 import { cleanupRemovedMdblistListSources, normalizeMdblistListUrls } from '../mdblist.js'
@@ -708,7 +708,6 @@ export async function uiRoutes(app: FastifyInstance) {
       streamProviderUrls: config.streamProviderUrls.join('\n'),
       rdStreamProviderUrls,
       torBoxStreamProviderUrls,
-      preferredAudioLanguage: config.preferredAudioLanguage,
       englishStreamMode: config.englishStreamMode,
       serverUrl:         config.serverUrl,
       traktClientId:     config.traktClientId,
@@ -827,22 +826,10 @@ export async function uiRoutes(app: FastifyInstance) {
     }
     const activeStreamProviderSetting = activeDebridProvider === 'tb' ? 'torBoxStreamProviderUrls' : 'rdStreamProviderUrls'
     config.streamProviderUrls = parseStreamProviderUrls(getSetting(activeStreamProviderSetting) ?? '')
-    config.stremioSearchProviderUrls = collectStreamProviderUrls(
-      getSetting('rdStreamProviderUrls') ?? '',
-      getSetting('torBoxStreamProviderUrls') ?? '',
-      getSetting('streamProviderUrls') ?? '',
-      getSetting('sootioUrl') ?? '',
-      config.stremioSearchProviderUrls.join('\n'),
-    )
     if (typeof body.englishStreamMode === 'string') {
       const mode = parseEnglishStreamMode(body.englishStreamMode)
       setSetting('englishStreamMode', mode)
       config.englishStreamMode = mode
-    }
-    if (typeof body.preferredAudioLanguage === 'string') {
-      const language = parseAudioLanguage(body.preferredAudioLanguage)
-      setSetting('preferredAudioLanguage', language)
-      config.preferredAudioLanguage = language
     }
     if (body.traktWatchlistMovies != null) {
       const enabled = parseBooleanSetting(String(body.traktWatchlistMovies), true)
@@ -955,7 +942,7 @@ export async function uiRoutes(app: FastifyInstance) {
     if (query.length < 2) return { results: [] }
     if (!config.tmdbApiKey) return reply.code(503).send({ error: 'TMDB API key not configured in Settings' })
 
-    const url = `https://api.themoviedb.org/3/search/${type}?api_key=${config.tmdbApiKey}&query=${encodeURIComponent(query)}&include_adult=false&language=en-US`
+    const url = `https://api.themoviedb.org/3/search/${type}?api_key=${config.tmdbApiKey}&query=${encodeURIComponent(query)}&include_adult=false&language=${encodeURIComponent(config.tmdbLanguage)}`
     const res = await fetch(url, { signal: AbortSignal.timeout(10_000) })
     if (!res.ok) return reply.code(502).send({ error: 'TMDB search failed' })
     const data = await res.json() as { results: Record<string, unknown>[] }
@@ -984,7 +971,7 @@ export async function uiRoutes(app: FastifyInstance) {
     if (!config.tmdbApiKey) return reply.code(503).send({ error: 'TMDB API key not configured' })
 
     if (type === 'movie') {
-      const movie = await fetchMovieByTmdbId(tmdbId)
+      const movie = await fetchMovieByTmdbId(tmdbId, '', { forceRefresh: true })
       if (!movie) return reply.code(404).send({ error: 'Movie not found on TMDB' })
       if (!canUserAccessMovie(user, movie)) return reply.code(403).send({ error: 'Rating policy blocks this title' })
       unhideLibraryItem('movie', tmdbId)
@@ -993,7 +980,7 @@ export async function uiRoutes(app: FastifyInstance) {
     }
 
     if (type === 'tv') {
-      const show = await fetchShowByTmdbId(tmdbId)
+      const show = await fetchShowByTmdbId(tmdbId, '', { forceRefresh: true })
       if (!show) return reply.code(404).send({ error: 'Show not found on TMDB' })
       if (!canUserAccessShow(user, show)) return reply.code(403).send({ error: 'Rating policy blocks this title' })
       const activeSeasonNumber = mode === 'latest'
@@ -1096,7 +1083,7 @@ export async function uiRoutes(app: FastifyInstance) {
     const mode = body.mode === 'latest' ? 'latest' : body.mode === 'all' ? 'all' : ''
     if (!tmdbId || !mode) return reply.code(400).send({ error: 'tmdbId and mode are required' })
 
-    const show = getShowByTmdbId(tmdbId) ?? await fetchShowByTmdbId(tmdbId)
+    const show = getShowByTmdbId(tmdbId) ?? await fetchShowByTmdbId(tmdbId, '', { forceRefresh: true })
     if (!show) return reply.code(404).send({ error: 'Show not found' })
     if (!hasAnySourceItem('show', tmdbId)) return reply.code(404).send({ error: 'Show not found in library' })
     if (!canUserAccessShow(user, show)) return reply.code(403).send({ error: 'Rating policy blocks this title' })
