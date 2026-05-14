@@ -287,14 +287,14 @@ export async function syncMdblistList(listUrl: string): Promise<MdblistListSyncR
   for (const entry of entries) {
     if (entry.mediaType === 'movie') {
       movieTmdbIds.push(entry.tmdbId)
-      const movie = await fetchMovieByTmdbId(entry.tmdbId)
+      const movie = await fetchMovieByTmdbId(entry.tmdbId, '', { forceRefresh: true })
       if (movie) movies++
       continue
     }
 
     const isNewToLibrary = !hasAnySourceItem('show', entry.tmdbId)
     showTmdbIds.push(entry.tmdbId)
-    const show = await fetchShowByTmdbId(entry.tmdbId)
+    const show = await fetchShowByTmdbId(entry.tmdbId, '', { forceRefresh: true })
     if (show && isNewToLibrary && config.showAddDefaultMode === 'latest') {
       upsertManualShowSubscription(entry.tmdbId, 'latest', 0)
     }
