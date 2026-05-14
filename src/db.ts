@@ -6,7 +6,7 @@ export interface Movie {
   id:                 number
   tmdbId:             number
   imdbId:             string
-  mediaLanguage:      string
+  metadataLanguage:   string
   title:              string
   year:               number
   overview:           string
@@ -30,7 +30,7 @@ export interface Show {
   tmdbId:       number
   imdbId:       string
   tvdbId:       number
-  mediaLanguage: string
+  metadataLanguage: string
   title:        string
   year:         number
   overview:     string
@@ -180,13 +180,6 @@ export interface MusicMetaTrack {
   updatedAt: string
 }
 
-export interface TorBoxCleanupJob {
-  downloadUrl: string
-  torrentId: number
-  deleteAt: number
-  updatedAt: string
-}
-
 export const DEFAULT_ADMIN_USER_ID = 'a0000000-0000-0000-0000-000000000002'
 export const MAX_RATING_OPTIONS = [
   'unrestricted',
@@ -210,6 +203,7 @@ CREATE TABLE IF NOT EXISTS movies (
   id                   INTEGER PRIMARY KEY AUTOINCREMENT,
   tmdb_id              INTEGER NOT NULL UNIQUE,
   imdb_id              TEXT    NOT NULL DEFAULT '',
+  metadata_language    TEXT    NOT NULL DEFAULT '',
   title                TEXT    NOT NULL,
   year                 INTEGER NOT NULL DEFAULT 0,
   overview             TEXT    NOT NULL DEFAULT '',
@@ -235,6 +229,7 @@ CREATE TABLE IF NOT EXISTS shows (
   tmdb_id        INTEGER NOT NULL UNIQUE,
   imdb_id        TEXT    NOT NULL DEFAULT '',
   tvdb_id        INTEGER NOT NULL DEFAULT 0,
+  metadata_language TEXT NOT NULL DEFAULT '',
   title          TEXT    NOT NULL,
   year           INTEGER NOT NULL DEFAULT 0,
   overview       TEXT    NOT NULL DEFAULT '',
@@ -290,14 +285,6 @@ CREATE TABLE IF NOT EXISTS app_settings (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL DEFAULT ''
 );
-
-CREATE TABLE IF NOT EXISTS torbox_cleanup_jobs (
-  download_url TEXT PRIMARY KEY,
-  torrent_id   INTEGER NOT NULL,
-  delete_at    INTEGER NOT NULL,
-  updated_at   TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
-);
-CREATE INDEX IF NOT EXISTS torbox_cleanup_jobs_delete_at ON torbox_cleanup_jobs(delete_at);
 
 CREATE TABLE IF NOT EXISTS app_users (
   id            TEXT PRIMARY KEY,
@@ -465,6 +452,8 @@ export function getDb(): Database.Database {
     try { _db.exec(`ALTER TABLE shows ADD COLUMN backdrop_path TEXT NOT NULL DEFAULT ''`) } catch { /* already exists */ }
     try { _db.exec(`ALTER TABLE movies ADD COLUMN logo_path TEXT NOT NULL DEFAULT ''`) } catch { /* already exists */ }
     try { _db.exec(`ALTER TABLE shows ADD COLUMN logo_path TEXT NOT NULL DEFAULT ''`) } catch { /* already exists */ }
+    try { _db.exec(`ALTER TABLE movies ADD COLUMN metadata_language TEXT NOT NULL DEFAULT ''`) } catch { /* already exists */ }
+    try { _db.exec(`ALTER TABLE shows ADD COLUMN metadata_language TEXT NOT NULL DEFAULT ''`) } catch { /* already exists */ }
     try { _db.exec(`ALTER TABLE movies ADD COLUMN official_rating TEXT NOT NULL DEFAULT ''`) } catch { /* already exists */ }
     try { _db.exec(`ALTER TABLE movies ADD COLUMN community_rating REAL NOT NULL DEFAULT 0`) } catch { /* already exists */ }
     try { _db.exec(`ALTER TABLE movies ADD COLUMN studios_json TEXT NOT NULL DEFAULT '[]'`) } catch { /* already exists */ }
@@ -478,17 +467,8 @@ export function getDb(): Database.Database {
     try { _db.exec(`ALTER TABLE episodes ADD COLUMN community_rating REAL NOT NULL DEFAULT 0`) } catch { /* already exists */ }
     try { _db.exec(`ALTER TABLE movies ADD COLUMN release_date TEXT NOT NULL DEFAULT ''`) } catch { /* already exists */ }
     try { _db.exec(`ALTER TABLE movies ADD COLUMN digital_release_date TEXT NOT NULL DEFAULT ''`) } catch { /* already exists */ }
-    try { _db.exec(`ALTER TABLE movies ADD COLUMN media_language TEXT NOT NULL DEFAULT ''`) } catch { /* already exists */ }
-    try { _db.exec(`ALTER TABLE shows ADD COLUMN media_language TEXT NOT NULL DEFAULT ''`) } catch { /* already exists */ }
     try { _db.exec(`ALTER TABLE music_meta_tracks ADD COLUMN youtube_id TEXT NOT NULL DEFAULT ''`) } catch { /* already exists */ }
     try { _db.exec(`ALTER TABLE music_meta_tracks ADD COLUMN youtube_resolved_at TEXT NOT NULL DEFAULT ''`) } catch { /* already exists */ }
-    try { _db.exec(`CREATE TABLE IF NOT EXISTS torbox_cleanup_jobs (
-      download_url TEXT PRIMARY KEY,
-      torrent_id   INTEGER NOT NULL,
-      delete_at    INTEGER NOT NULL,
-      updated_at   TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
-    )`) } catch { /* already exists */ }
-    try { _db.exec(`CREATE INDEX IF NOT EXISTS torbox_cleanup_jobs_delete_at ON torbox_cleanup_jobs(delete_at)`) } catch { /* already exists */ }
     migrateAppUserRoles(_db)
     migrateLegacyUserData(_db)
   }
@@ -663,7 +643,7 @@ function row2movie(r: Record<string, unknown>): Movie {
     id:           r.id            as number,
     tmdbId:       r.tmdb_id       as number,
     imdbId:       r.imdb_id       as string,
-    mediaLanguage:(r.media_language as string) ?? '',
+    metadataLanguage: (r.metadata_language as string) ?? '',
     title:        r.title         as string,
     year:         r.year          as number,
     overview:     r.overview      as string,
@@ -685,11 +665,11 @@ function row2movie(r: Record<string, unknown>): Movie {
 
 export function upsertMovie(m: Omit<Movie, 'id'>): void {
   getDb().prepare(`
-    INSERT INTO movies (tmdb_id, imdb_id, media_language, title, year, overview, poster_path, backdrop_path, logo_path, genres, runtime_mins, popularity, official_rating, community_rating, studios_json, tags_json, release_date, digital_release_date, synced_at)
-    VALUES (@tmdbId, @imdbId, @mediaLanguage, @title, @year, @overview, @posterPath, @backdropPath, @logoPath, @genres, @runtimeMins, @popularity, @officialRating, @communityRating, @studiosJson, @tagsJson, @releaseDate, @digitalReleaseDate, COALESCE(NULLIF(@syncedAt, ''), strftime('%Y-%m-%dT%H:%M:%SZ','now')))
+    INSERT INTO movies (tmdb_id, imdb_id, metadata_language, title, year, overview, poster_path, backdrop_path, logo_path, genres, runtime_mins, popularity, official_rating, community_rating, studios_json, tags_json, release_date, digital_release_date, synced_at)
+    VALUES (@tmdbId, @imdbId, @metadataLanguage, @title, @year, @overview, @posterPath, @backdropPath, @logoPath, @genres, @runtimeMins, @popularity, @officialRating, @communityRating, @studiosJson, @tagsJson, @releaseDate, @digitalReleaseDate, COALESCE(NULLIF(@syncedAt, ''), strftime('%Y-%m-%dT%H:%M:%SZ','now')))
     ON CONFLICT(tmdb_id) DO UPDATE SET
       imdb_id              = excluded.imdb_id,
-      media_language       = excluded.media_language,
+      metadata_language    = excluded.metadata_language,
       title                = excluded.title,
       year                 = excluded.year,
       overview             = excluded.overview,
@@ -1042,11 +1022,6 @@ export function getMovieByTmdbId(tmdbId: number): Movie | null {
   return r ? row2movie(r as Record<string, unknown>) : null
 }
 
-export function getMovieByImdbId(imdbId: string): Movie | null {
-  const r = getDb().prepare(`SELECT * FROM movies WHERE imdb_id = ? LIMIT 1`).get(imdbId)
-  return r ? row2movie(r as Record<string, unknown>) : null
-}
-
 // ── Shows ─────────────────────────────────────────────────────────────────────
 
 function row2show(r: Record<string, unknown>): Show {
@@ -1055,7 +1030,7 @@ function row2show(r: Record<string, unknown>): Show {
     tmdbId:       r.tmdb_id       as number,
     imdbId:       r.imdb_id       as string,
     tvdbId:       (r.tvdb_id as number) ?? 0,
-    mediaLanguage:(r.media_language as string) ?? '',
+    metadataLanguage: (r.metadata_language as string) ?? '',
     title:        r.title         as string,
     year:         r.year          as number,
     overview:     r.overview      as string,
@@ -1076,12 +1051,12 @@ function row2show(r: Record<string, unknown>): Show {
 
 export function upsertShow(s: Omit<Show, 'id'>): void {
   getDb().prepare(`
-    INSERT INTO shows (tmdb_id, imdb_id, tvdb_id, media_language, title, year, overview, poster_path, backdrop_path, logo_path, genres, status, num_seasons, popularity, official_rating, community_rating, studios_json, tags_json, synced_at)
-    VALUES (@tmdbId, @imdbId, @tvdbId, @mediaLanguage, @title, @year, @overview, @posterPath, @backdropPath, @logoPath, @genres, @status, @numSeasons, @popularity, @officialRating, @communityRating, @studiosJson, @tagsJson, COALESCE(NULLIF(@syncedAt, ''), strftime('%Y-%m-%dT%H:%M:%SZ','now')))
+    INSERT INTO shows (tmdb_id, imdb_id, tvdb_id, metadata_language, title, year, overview, poster_path, backdrop_path, logo_path, genres, status, num_seasons, popularity, official_rating, community_rating, studios_json, tags_json, synced_at)
+    VALUES (@tmdbId, @imdbId, @tvdbId, @metadataLanguage, @title, @year, @overview, @posterPath, @backdropPath, @logoPath, @genres, @status, @numSeasons, @popularity, @officialRating, @communityRating, @studiosJson, @tagsJson, COALESCE(NULLIF(@syncedAt, ''), strftime('%Y-%m-%dT%H:%M:%SZ','now')))
     ON CONFLICT(tmdb_id) DO UPDATE SET
       imdb_id      = excluded.imdb_id,
       tvdb_id      = excluded.tvdb_id,
-      media_language = excluded.media_language,
+      metadata_language = excluded.metadata_language,
       title        = excluded.title,
       year         = excluded.year,
       overview     = excluded.overview,
@@ -1268,37 +1243,6 @@ export function setSetting(key: string, value: string): void {
 export function getAllSettings(): Record<string, string> {
   const rows = getDb().prepare(`SELECT key, value FROM app_settings`).all() as { key: string; value: string }[]
   return Object.fromEntries(rows.map(r => [r.key, r.value]))
-}
-
-// ── TorBox cleanup jobs ───────────────────────────────────────────────────────
-
-export function upsertTorBoxCleanupJob(downloadUrl: string, torrentId: number, deleteAt: number): void {
-  getDb().prepare(`
-    INSERT INTO torbox_cleanup_jobs (download_url, torrent_id, delete_at, updated_at)
-    VALUES (?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ','now'))
-    ON CONFLICT(download_url) DO UPDATE SET
-      torrent_id = excluded.torrent_id,
-      delete_at = excluded.delete_at,
-      updated_at = excluded.updated_at
-  `).run(downloadUrl, torrentId, deleteAt)
-}
-
-export function deleteTorBoxCleanupJob(downloadUrl: string): void {
-  getDb().prepare(`DELETE FROM torbox_cleanup_jobs WHERE download_url = ?`).run(downloadUrl)
-}
-
-export function listTorBoxCleanupJobs(): TorBoxCleanupJob[] {
-  const rows = getDb().prepare(`
-    SELECT download_url, torrent_id, delete_at, updated_at
-    FROM torbox_cleanup_jobs
-    ORDER BY delete_at ASC
-  `).all() as Array<{ download_url: string; torrent_id: number; delete_at: number; updated_at: string }>
-  return rows.map(row => ({
-    downloadUrl: row.download_url,
-    torrentId: row.torrent_id,
-    deleteAt: row.delete_at,
-    updatedAt: row.updated_at,
-  }))
 }
 
 // ── Music catalog ─────────────────────────────────────────────────────────────
