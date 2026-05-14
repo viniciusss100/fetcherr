@@ -64,7 +64,7 @@
       <div class="provider-actions">
         <button type="button" class="btn btn-sm" onclick="addProviderRow()">+ Add Add-on</button>
       </div>
-      <div class="field-note">Paste one Stremio add-on manifest or base URL per row. Add-ons are saved separately for Real-Debrid and TorBox.</div>
+      <div class="field-note">Paste one Stremio add-on manifest or base URL per row. Add-ons are saved separately for Real-Debrid and TorBox, and both can stay active together.</div>
     </div>
     <div class="field">
       <label for="preferredAudioLanguage">Preferred Audio Language</label>
@@ -97,9 +97,9 @@
 
   <!-- Debrid -->
   <section class="section" id="debrid">
-    <div class="section-title">Debrid</div>
-    <div class="field-note debrid-intro">Choose Real-Debrid or TorBox. Fetcherr keeps both saved credentials, but only the selected provider is active for playback.</div>
-    <div class="tabs debrid-tabs" role="tablist" aria-label="Debrid provider settings">
+    <div class="section-title">Dual Debrid</div>
+    <div class="field-note debrid-intro">Keep Real-Debrid and TorBox configured together. Fetcherr prefers TorBox first, then falls back to Real-Debrid when a hash is not available there.</div>
+    <div class="tabs debrid-tabs" role="tablist" aria-label="Dual Debrid provider settings">
       <button type="button" id="debridTabRd" class="tab active" role="tab" aria-selected="true" aria-controls="debridPanelRd" onclick="setDebridProvider('rd')">
         Real-Debrid <span id="rdConfigState" class="config-state" hidden></span>
       </button>
@@ -115,7 +115,7 @@
           <input id="rdApiKey" type="password" placeholder="Enter your Real-Debrid API key" oninput="onApiKeyInput('rd')">
           <button id="rdValidateBtn" class="btn btn-sm" onclick="validateRD()" hidden>Validate</button>
         </div>
-        <div class="field-note">Use Real-Debrid as the debrid resolver for cached torrent playback.</div>
+        <div class="field-note">Real-Debrid stays available as a fallback resolver for cached torrent playback.</div>
       </div>
     </div>
 
@@ -126,7 +126,7 @@
           <input id="torBoxApiKey" type="password" placeholder="Enter your TorBox API key" oninput="onApiKeyInput('tb')">
           <button id="tbValidateBtn" class="btn btn-sm" onclick="validateTorBox()" hidden>Validate</button>
         </div>
-        <div class="field-note">Use TorBox as the debrid resolver for cached torrent playback.</div>
+        <div class="field-note">TorBox is checked first so its cache is used whenever possible.</div>
       </div>
     </div>
   </section>
@@ -1042,8 +1042,8 @@
       traktCollections: document.getElementById('traktCollections').checked,
       traktLists:        selectedTraktLists,
       mdblistLists: document.getElementById('mdblistLists').value,
-      ...(activeDebridProvider === 'rd' && rdApiKey ? { rdApiKey } : {}),
-      ...(activeDebridProvider === 'tb' && torBoxApiKey ? { torBoxApiKey } : {}),
+      ...(rdApiKey ? { rdApiKey } : {}),
+      ...(torBoxApiKey ? { torBoxApiKey } : {}),
       ...(tmdbApiKey ? { tmdbApiKey } : {}),
       ...(tvdbApiKey ? { tvdbApiKey } : {}),
       ...(traktClientSecret ? { traktClientSecret } : {}),
