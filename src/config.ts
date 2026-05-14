@@ -9,6 +9,10 @@ export function parseStreamProviderUrls(value: string): string[] {
     .filter(Boolean)
 }
 
+export function collectStreamProviderUrls(...values: Array<string | undefined>): string[] {
+  return [...new Set(values.flatMap(value => parseStreamProviderUrls(value ?? '')))]
+}
+
 export function parseMusicAddonUrls(value: string): string[] {
   return value
     .split(/[\r\n,]+/)
@@ -130,6 +134,7 @@ export const config = {
   showAddDefaultMode: parseShowAddDefaultMode(process.env.SHOW_ADD_DEFAULT_MODE),
   movieReleaseMode: parseMovieReleaseMode(process.env.MOVIE_RELEASE_MODE),
   streamProviderUrls: parseStreamProviderUrls(process.env.STREAM_PROVIDER_URLS ?? ''),
+  stremioSearchProviderUrls: parseStreamProviderUrls(process.env.STREMIO_SEARCH_PROVIDER_URLS ?? ''),
   musicAddonUrls: parseMusicAddonUrls(process.env.MUSIC_ADDON_URLS ?? process.env.MUSIC_ADDON_URL ?? process.env.SPOTIFLAC_URL ?? ''),
   preferredAudioLanguage: parseAudioLanguage(process.env.PREFERRED_AUDIO_LANGUAGE),
   englishStreamMode: parseEnglishStreamMode(process.env.ENGLISH_STREAM_MODE ?? ''),

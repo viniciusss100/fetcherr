@@ -156,7 +156,7 @@ Most runtime configuration should be entered in the web UI and is stored in Fetc
 
 Both.
 
-Your add-on settings still matter because they control which streams each provider returns. Fetcherr then ranks those returned streams using its own playback criteria, such as debrid cache availability, language preference, match quality, and format compatibility.
+Your add-on settings still matter because they control which streams each provider returns and which Stremio search results Fetcherr can surface. Fetcherr then ranks those returned streams using its own playback criteria, such as debrid cache availability, language preference, match quality, and format compatibility.
 
 If you configure multiple provider URLs, Fetcherr also respects their order. Earlier providers are tried first, and Fetcherr then picks the best candidate within that provider's results before moving on to the next one.
 

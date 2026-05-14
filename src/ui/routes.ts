@@ -22,7 +22,7 @@ import {
   getSessionCookie, clearSessionCookie, getTokenFromCookie,
 } from './auth.js'
 import { config } from '../config.js'
-import { normalizeSootioUrl, parseAudioLanguage, parseBooleanSetting, parseEnglishStreamMode, parseMdblistLists, parseMovieReleaseMode, parseShowAddDefaultMode, parseStreamProviderUrls, parseTraktLists } from '../config.js'
+import { collectStreamProviderUrls, normalizeSootioUrl, parseAudioLanguage, parseBooleanSetting, parseEnglishStreamMode, parseMdblistLists, parseMovieReleaseMode, parseShowAddDefaultMode, parseStreamProviderUrls, parseTraktLists } from '../config.js'
 import { fetchMovieByTmdbId, fetchMovieCollection, fetchShowByTmdbId, ensureShowSeasonsCached } from '../tmdb.js'
 import { cleanupRemovedTraktListSources, fetchTraktUserLists } from '../trakt.js'
 import { cleanupRemovedMdblistListSources, normalizeMdblistListUrls } from '../mdblist.js'
@@ -827,6 +827,13 @@ export async function uiRoutes(app: FastifyInstance) {
     }
     const activeStreamProviderSetting = activeDebridProvider === 'tb' ? 'torBoxStreamProviderUrls' : 'rdStreamProviderUrls'
     config.streamProviderUrls = parseStreamProviderUrls(getSetting(activeStreamProviderSetting) ?? '')
+    config.stremioSearchProviderUrls = collectStreamProviderUrls(
+      getSetting('rdStreamProviderUrls') ?? '',
+      getSetting('torBoxStreamProviderUrls') ?? '',
+      getSetting('streamProviderUrls') ?? '',
+      getSetting('sootioUrl') ?? '',
+      config.stremioSearchProviderUrls.join('\n'),
+    )
     if (typeof body.englishStreamMode === 'string') {
       const mode = parseEnglishStreamMode(body.englishStreamMode)
       setSetting('englishStreamMode', mode)
