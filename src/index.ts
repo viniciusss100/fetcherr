@@ -13,6 +13,7 @@ import { resolveStream, probeAudioLanguages, NotCachedError, ProviderUnavailable
 import {
   markPlaybackStarted as markTorBoxPlaybackStarted,
   resolveStream as tbResolveStream,
+  rehydrateTorBoxCleanupJobs,
   touchDownloadUrl as touchTorBoxDownloadUrl,
 } from './torbox.js'
 import { getShowByImdbId, getEpisodesForSeason, getLatestSeasonNumberForShow, listLatestSeasonShowSubscriptions, listMovies, listShows, pruneAllOrphanedMovies, pruneAllOrphanedShows, removeSourceKey, upsertManualShowSubscription } from './db.js'
@@ -95,6 +96,8 @@ getDb()
     config.streamProviderUrls = parseStreamProviderUrls(s.rdStreamProviderUrls ?? s.streamProviderUrls ?? config.streamProviderUrls.join('\n'))
   }
 }
+
+rehydrateTorBoxCleanupJobs()
 
 // Wrap Fastify logger so UI log viewer captures it
 wrapFastifyLogger(app)

@@ -1,10 +1,15 @@
 import { config } from './config.js'
+import { deleteTorBoxCleanupJob, getSetting, listTorBoxCleanupJobs, upsertTorBoxCleanupJob } from './db.js'
 import { NotCachedError, ProviderUnavailableError } from './rd.js'
 import type { ResolvedStream } from './rd.js'
 
 export { NotCachedError, ProviderUnavailableError }
 
 const BASE = 'https://api.torbox.app/v1/api'
+
+function torBoxApiKey(): string {
+  return config.torBoxApiKey || getSetting('torBoxApiKey') || ''
+}
 
 // ── Typed shapes ──────────────────────────────────────────────────────────────
 
@@ -80,7 +85,7 @@ async function tbFetch<T>(
     res = await fetch(url, {
       method,
       headers: {
-        Authorization: `Bearer ${config.torBoxApiKey}`,
+        Authorization: `Bearer ${torBoxApiKey()}`,
         ...(formBody ? { 'Content-Type': 'application/x-www-form-urlencoded' } : {}),
         ...(jsonBody ? { 'Content-Type': 'application/json' } : {}),
       },
@@ -354,10 +359,12 @@ interface ResolvedCacheEntry extends ResolvedStream {
 const RESOLVED_CACHE_TTL_MS = 3 * 60 * 1000
 const resolvedStreamCache   = new Map<string, ResolvedCacheEntry>()
 const CLEANUP_IDLE_DELAY_MS = 15 * 60 * 1000
+const CLEANUP_RETRY_DELAY_MS = 5 * 60 * 1000
 
 interface CleanupEntry {
   torrentId:       number
   activeRequests: number
+  deleteAt:        number
   timer?:          NodeJS.Timeout
 }
 
@@ -382,17 +389,28 @@ function setCachedResolvedStream(hash: string, filePathHint: string | undefined,
   })
 }
 
-function scheduleDeleteTorrent(downloadUrl: string, entry: CleanupEntry): void {
+function unscheduleCleanup(downloadUrl: string): void {
+  deleteTorBoxCleanupJob(downloadUrl)
+  cleanupByDownloadUrl.delete(downloadUrl)
+}
+
+function scheduleDeleteTorrent(downloadUrl: string, entry: CleanupEntry, deleteAt = Date.now() + CLEANUP_IDLE_DELAY_MS): void {
   if (entry.timer) clearTimeout(entry.timer)
+  entry.deleteAt = deleteAt
+  upsertTorBoxCleanupJob(downloadUrl, entry.torrentId, deleteAt)
   const timer = setTimeout(() => {
     if (entry.activeRequests > 0) return
     void deleteTorrent(entry.torrentId)
       .then(() => {
-        cleanupByDownloadUrl.delete(downloadUrl)
+        unscheduleCleanup(downloadUrl)
         console.log(`torbox: deleted torrent ${entry.torrentId} after playback idle timeout`)
       })
-      .catch((err: unknown) => console.warn(`torbox: failed to delete torrent ${entry.torrentId}: ${String(err)}`))
-  }, CLEANUP_IDLE_DELAY_MS)
+      .catch((err: unknown) => {
+        console.warn(`torbox: failed to delete torrent ${entry.torrentId}: ${String(err)}`)
+        if (entry.activeRequests > 0) return
+        scheduleDeleteTorrent(downloadUrl, entry, Date.now() + CLEANUP_RETRY_DELAY_MS)
+      })
+  }, Math.max(0, deleteAt - Date.now()))
   timer.unref()
   entry.timer = timer
 }
@@ -404,7 +422,7 @@ function trackDownloadUrl(downloadUrl: string, torrentId: number): void {
     scheduleDeleteTorrent(downloadUrl, existing)
     return
   }
-  const entry: CleanupEntry = { torrentId, activeRequests: 0 }
+  const entry: CleanupEntry = { torrentId, activeRequests: 0, deleteAt: Date.now() + CLEANUP_IDLE_DELAY_MS }
   cleanupByDownloadUrl.set(downloadUrl, entry)
   scheduleDeleteTorrent(downloadUrl, entry)
 }
@@ -430,6 +448,32 @@ export function touchDownloadUrl(downloadUrl: string): void {
   const entry = cleanupByDownloadUrl.get(downloadUrl)
   if (!entry || entry.activeRequests > 0) return
   scheduleDeleteTorrent(downloadUrl, entry)
+}
+
+export function rehydrateTorBoxCleanupJobs(): void {
+  if (!torBoxApiKey()) return
+  const now = Date.now()
+  for (const job of listTorBoxCleanupJobs()) {
+    const existing = cleanupByDownloadUrl.get(job.downloadUrl)
+    const entry: CleanupEntry = existing ?? {
+      torrentId: job.torrentId,
+      activeRequests: 0,
+      deleteAt: job.deleteAt,
+    }
+    entry.torrentId = job.torrentId
+    entry.deleteAt = job.deleteAt
+    cleanupByDownloadUrl.set(job.downloadUrl, entry)
+    if (job.deleteAt <= now) {
+      void deleteTorrent(job.torrentId)
+        .then(() => {
+          unscheduleCleanup(job.downloadUrl)
+          console.log(`torbox: deleted torrent ${job.torrentId} after restart recovery`)
+        })
+        .catch((err: unknown) => console.warn(`torbox: failed to delete torrent ${job.torrentId} during restart recovery: ${String(err)}`))
+      continue
+    }
+    scheduleDeleteTorrent(job.downloadUrl, entry, job.deleteAt)
+  }
 }
 
 function normalizeHashInput(hash: string): { cacheHash: string; magnet: string; cacheKeyHash: string } {
@@ -472,7 +516,7 @@ export async function resolveStream(
   hash: string,
   filePathHint?: string,
 ): Promise<ResolvedStream> {
-  if (!config.torBoxApiKey) throw new Error('TORBOX_API_KEY not configured')
+  if (!torBoxApiKey()) throw new Error('TORBOX_API_KEY not configured')
   const { cacheHash, magnet, cacheKeyHash } = normalizeHashInput(hash)
 
   const cached = getCachedResolvedStream(cacheKeyHash, filePathHint)
