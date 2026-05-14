@@ -35,11 +35,88 @@ export function parseBooleanSetting(value: string | undefined, fallback = false)
   return fallback
 }
 
+export type AudioLanguage =
+  | 'en'
+  | 'ja'
+  | 'es'
+  | 'fr'
+  | 'de'
+  | 'it'
+  | 'ko'
+  | 'zh'
+  | 'pt'
+  | 'ru'
+  | 'hi'
+  | 'ar'
+
 export type EnglishStreamMode = 'off' | 'prefer' | 'require'
 export type DirectPlaybackMode = 'off' | 'torrentsOnly' | 'all'
 export type TorBoxPlaybackMode = 'proxy' | 'requestdlRedirect'
 export type ShowAddDefaultMode = 'all' | 'latest'
 export type MovieReleaseMode = 'digital' | 'theatrical'
+
+export const AUDIO_LANGUAGE_ALIASES: Record<AudioLanguage, string[]> = {
+  en: ['en', 'eng', 'english', 'original audio'],
+  ja: ['ja', 'jpn', 'japanese', 'nihongo'],
+  es: ['es', 'spa', 'spanish', 'espanol', 'español', 'castellano', 'latino', 'latam'],
+  fr: ['fr', 'fre', 'fra', 'french', 'francais', 'français'],
+  de: ['de', 'ger', 'deu', 'german', 'deutsch'],
+  it: ['it', 'ita', 'italian', 'italiano'],
+  ko: ['ko', 'kor', 'korean'],
+  zh: ['zh', 'zho', 'chi', 'chs', 'cht', 'zhs', 'zht', 'chinese', 'mandarin', 'cantonese'],
+  pt: [
+    'pt',
+    'por',
+    'portuguese',
+    'portugues',
+    'português',
+    'pt-br',
+    'ptbr',
+    'por-br',
+    'brazilian',
+    'dublado',
+    'dublagem',
+    'bremux',
+    'cypher',
+    'freddiegellar',
+    'dual-bioma',
+    'dual-c76',
+    'tossato',
+    'c0ral',
+    'dual-nogroup',
+    'dual-pia',
+    'dual-xor',
+    'dual-xar',
+    'g4ris',
+    'dual-sigma',
+    'andrehsa',
+    'riper',
+    'sigla',
+    'tontom',
+    'dual-eck',
+    '1-sf',
+    '0-sf',
+    'rarbr',
+    'tupac',
+    'alfahd',
+    'dual-cza',
+    'dual-7sprite7',
+    'potatin',
+    'dual-fly',
+    'franceira',
+  ],
+  ru: ['ru', 'rus', 'russian'],
+  hi: ['hi', 'hin', 'hindi'],
+  ar: ['ar', 'ara', 'arabic'],
+}
+
+export function parseAudioLanguage(value: string | undefined): AudioLanguage {
+  const normalized = (value ?? '').trim().toLowerCase()
+  for (const [language, aliases] of Object.entries(AUDIO_LANGUAGE_ALIASES) as Array<[AudioLanguage, string[]]>) {
+    if (aliases.includes(normalized)) return language
+  }
+  return 'en'
+}
 
 export function parseEnglishStreamMode(value: string): EnglishStreamMode {
   return value === 'off' || value === 'require' ? value : 'prefer'
@@ -93,6 +170,7 @@ export const config = {
   dbPath:     process.env.DATABASE_PATH ?? '/app/data/fetcherr.db',
   tmdbApiKey: process.env.TMDB_API_KEY ?? '',
   tmdbLanguage: normalizeTmdbLanguage(process.env.TMDB_LANGUAGE),
+  preferredAudioLanguage: parseAudioLanguage(process.env.PREFERRED_AUDIO_LANGUAGE),
   tvdbApiKey: process.env.TVDB_API_KEY ?? '',
   sootioUrl:  normalizeSootioUrl(process.env.AIOSTREAM_URL ?? process.env.SOOTIO_URL ?? ''),
   serverName: process.env.SERVER_NAME ?? 'Fetcherr',

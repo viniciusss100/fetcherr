@@ -19,7 +19,7 @@ import { getMovieByTmdbId, getShowByImdbId, getEpisodesForSeason, getLatestSeaso
 import { ensureShowSeasonsCached, refreshShowMetadataIfNeeded, refreshMovieMetadataIfNeeded } from './tmdb.js'
 import { getSessionUser, getTokenFromCookie, isUiAuthConfigured, isValidSession } from './ui/auth.js'
 import { verifySignedPlaybackPath } from './play-auth.js'
-import { hasEnglishAudioMarker, hasNonEnglishAudioMarker } from './streamLanguage.js'
+import { hasNonPreferredAudioMarker, hasPreferredAudioMarker } from './streamLanguage.js'
 
 const app = Fastify({
   logger: { level: 'info' },
@@ -430,18 +430,14 @@ function streamFilenameHint(stream: { behaviorHints?: Record<string, unknown> })
   return typeof filename === 'string' && filename.trim() ? filename : undefined
 }
 
-function streamClearlyEnglish(stream: { name?: string; title?: string; description?: string; behaviorHints?: Record<string, unknown> }): boolean {
+function streamHasPreferredAudio(stream: { name?: string; title?: string; description?: string; behaviorHints?: Record<string, unknown> }): boolean {
   const text = streamMetadataText(stream)
-  const hasEnglish = hasEnglishAudioMarker(text)
-  const hasNonEnglish = hasNonEnglishAudioMarker(text)
-  return hasEnglish && !hasNonEnglish
+  return hasPreferredAudioMarker(text, config.preferredAudioLanguage)
 }
 
-function streamClearlyNonEnglish(stream: { name?: string; title?: string; description?: string; behaviorHints?: Record<string, unknown> }): boolean {
+function streamClearlyNotPreferredAudio(stream: { name?: string; title?: string; description?: string; behaviorHints?: Record<string, unknown> }): boolean {
   const text = streamMetadataText(stream)
-  const hasEnglish = hasEnglishAudioMarker(text)
-  const hasNonEnglish = hasNonEnglishAudioMarker(text)
-  return hasNonEnglish && !hasEnglish
+  return !streamHasPreferredAudio(stream) && hasNonPreferredAudioMarker(text, config.preferredAudioLanguage)
 }
 
 function streamClearlyUsenetBacked(stream: { name?: string; title?: string; description?: string; behaviorHints?: Record<string, unknown> }): boolean {
@@ -520,21 +516,19 @@ async function resolveDirectPlaybackUrl(url: string): Promise<string> {
   }
 }
 
-function shouldProbeEnglishAudio(
+function shouldProbePreferredAudio(
   stream: { name?: string; title?: string; description?: string; behaviorHints?: Record<string, unknown> },
   filename: string,
 ): boolean {
   if (config.englishStreamMode !== 'require') return false
-  if (streamClearlyEnglish(stream)) return false
-  if (streamClearlyNonEnglish(stream)) return false
+  if (streamHasPreferredAudio(stream)) return false
+  if (streamClearlyNotPreferredAudio(stream)) return false
   if (isRemoteAudioProbeUnreliable(filename)) return false
   return true
 }
 
-function hasEnglishAudio(languages: string[]): boolean {
-  return languages.some(lang =>
-    /^(en|eng|english)$/.test(lang) || /\beng(lish)?\b/.test(lang),
-  )
+function hasPreferredAudio(languages: string[]): boolean {
+  return languages.some(lang => hasPreferredAudioMarker(lang, config.preferredAudioLanguage))
 }
 
 function hasOnlyUndeterminedAudio(languages: string[]): boolean {
@@ -588,8 +582,8 @@ async function resolvePlayableStream(
       const hash = extractHashFromStream(stream)
       const hashLabel = hash ? hash.slice(0, 8) : 'direct-url'
       try {
-        if (config.englishStreamMode === 'require' && streamClearlyNonEnglish(stream)) {
-          app.log.info(`play: skipping stream metadata for ${label}, clearly non-English`)
+        if (config.englishStreamMode === 'require' && streamClearlyNotPreferredAudio(stream)) {
+          app.log.info(`play: skipping stream metadata for ${label}, clearly not the selected audio language`)
           continue
         }
 
@@ -613,22 +607,22 @@ async function resolvePlayableStream(
             directFilename
             && config.englishStreamMode === 'require'
             && isRemoteAudioProbeUnreliable(directFilename)
-            && !streamClearlyEnglish(stream)
+            && !streamHasPreferredAudio(stream)
           ) {
-            app.log.info(`play: skipping unprobeable ${directFilename}, no confirmed English metadata`)
+            app.log.info(`play: skipping unprobeable ${directFilename}, no confirmed selected-language metadata`)
             continue
           }
           const isDebridCachedStream = /\[rd\+\]|\[rd ⚡\]|\[rd⚡\]|\brd\+\b|\[tb\+\]|\[tb ⚡\]|\[tb⚡\]|\btb\+\b/.test(streamMetadataText(stream))
           // Skip ffprobe for debrid-cached streams — their proxy URLs will be resolved to
           // CDN URLs at play-time; probing here would waste a TorBox add/delete cycle.
-          if (!isDebridCachedStream && directFilename && shouldProbeEnglishAudio(stream, directFilename)) {
+          if (!isDebridCachedStream && directFilename && shouldProbePreferredAudio(stream, directFilename)) {
             try {
               const audioLanguages = await probeAudioLanguages(stream.url)
               app.log.info(`play: ffprobe audio languages for ${directFilename}: ${audioLanguages.join(', ') || 'none'}`)
               const noLanguageInfo = audioLanguages.length === 0
-              const allowsUndetermined = (hasOnlyUndeterminedAudio(audioLanguages) || noLanguageInfo) && !streamClearlyNonEnglish(stream)
-              if (config.englishStreamMode === 'require' && !hasEnglishAudio(audioLanguages) && !allowsUndetermined) {
-                app.log.info(`play: skipping ${directFilename}, no English audio detected`)
+              const allowsUndetermined = (hasOnlyUndeterminedAudio(audioLanguages) || noLanguageInfo) && !streamClearlyNotPreferredAudio(stream)
+              if (config.englishStreamMode === 'require' && !hasPreferredAudio(audioLanguages) && !allowsUndetermined) {
+                app.log.info(`play: skipping ${directFilename}, no selected audio language detected`)
                 continue
               }
             } catch (err) {
@@ -756,19 +750,19 @@ async function resolvePlayableStream(
         if (
           config.englishStreamMode === 'require'
           && isRemoteAudioProbeUnreliable(resolved.filename)
-          && !streamClearlyEnglish(stream)
+          && !streamHasPreferredAudio(stream)
         ) {
-          app.log.info(`play: skipping unprobeable ${resolved.filename}, no confirmed English metadata`)
+          app.log.info(`play: skipping unprobeable ${resolved.filename}, no confirmed selected-language metadata`)
           continue
         }
-        if (shouldProbeEnglishAudio(stream, resolved.filename)) {
+        if (shouldProbePreferredAudio(stream, resolved.filename)) {
           try {
             const audioLanguages = await probeAudioLanguages(resolved.url)
             app.log.info(`play: ffprobe audio languages for ${resolved.filename}: ${audioLanguages.join(', ') || 'none'}`)
             const noLanguageInfo = audioLanguages.length === 0
-            const allowsUndetermined = (hasOnlyUndeterminedAudio(audioLanguages) || noLanguageInfo) && !streamClearlyNonEnglish(stream)
-            if (config.englishStreamMode === 'require' && !hasEnglishAudio(audioLanguages) && !allowsUndetermined) {
-              app.log.info(`play: skipping ${resolved.filename}, no English audio detected`)
+            const allowsUndetermined = (hasOnlyUndeterminedAudio(audioLanguages) || noLanguageInfo) && !streamClearlyNotPreferredAudio(stream)
+            if (config.englishStreamMode === 'require' && !hasPreferredAudio(audioLanguages) && !allowsUndetermined) {
+              app.log.info(`play: skipping ${resolved.filename}, no selected audio language detected`)
               continue
           }
         } catch (err) {
@@ -792,7 +786,7 @@ async function resolvePlayableStream(
     )
   }
   const best = config.englishStreamMode === 'require'
-    ? (streams.find(stream => streamClearlyEnglish(stream)) ?? streams.find(stream => !streamClearlyNonEnglish(stream)))
+    ? (streams.find(stream => streamHasPreferredAudio(stream)) ?? streams.find(stream => !streamClearlyNotPreferredAudio(stream)))
     : streams[0]
   if (!best?.url) {
     cacheFailedPlay(cacheKey, 'No streams found')
