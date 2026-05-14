@@ -1298,10 +1298,11 @@ async function buildSearchResultItems(
     ? await searchStremioMetas(searchTerm, stremioTypes).catch(() => [])
     : []
   const validStremioMetas = rawStremioMetas.filter(meta => !isStremioErrorMeta(meta))
+  const fallbackStremioMetas = stremioTypes.length
+    ? await searchTmdbStremioFallback(searchTerm, stremioTypes)
+    : []
   const stremioMetas = await enrichStremioMetasWithImdbIds(
-    validStremioMetas.length || !stremioTypes.length
-      ? validStremioMetas
-      : await searchTmdbStremioFallback(searchTerm, stremioTypes)
+    [...validStremioMetas, ...fallbackStremioMetas]
   )
 
   const localMovies = wantMovies
@@ -1978,10 +1979,11 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
       ? await searchStremioMetas(SearchTerm, stremioTypes).catch(() => [])
       : []
     const validStremioMetas = rawStremioMetas.filter(meta => !isStremioErrorMeta(meta))
+    const fallbackStremioMetas = stremioTypes.length
+      ? await searchTmdbStremioFallback(SearchTerm, stremioTypes)
+      : []
     const stremioMetas = await enrichStremioMetasWithImdbIds(
-      validStremioMetas.length || !stremioTypes.length
-        ? validStremioMetas
-        : await searchTmdbStremioFallback(SearchTerm, stremioTypes)
+      [...validStremioMetas, ...fallbackStremioMetas]
     )
     const hints = stremioMetas
       .map(meta => {
