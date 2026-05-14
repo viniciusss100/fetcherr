@@ -1,19 +1,29 @@
 import { config } from './config.js'
+import { buildTmdbImageLanguageList } from './config.js'
 import {
   upsertMovie, getMovieByTmdbId, type Movie,
   upsertShow, getShowByTmdbId, type Show,
   upsertSeason, getSeasonsForShow, type Season,
   upsertEpisode, type Episode, getAiredEpisodesForSeason, getEffectiveShowMode,
 } from './db.js'
-import { fetchEpisodeStillFallbacks, fetchSeriesLanguage } from './tvdb.js'
+import { fetchEpisodeStillFallbacks } from './tvdb.js'
 
 const BASE = 'https://api.themoviedb.org/3'
 const MISSING_STILL_RETRY_MS = 7 * 24 * 60 * 60 * 1000
 const ACTIVE_SHOW_REFRESH_MS = 6 * 60 * 60 * 1000
 
-async function tmdbGet(path: string): Promise<unknown> {
-  const sep = path.includes('?') ? '&' : '?'
-  const res = await fetch(`${BASE}${path}${sep}api_key=${config.tmdbApiKey}`, {
+type TmdbGetOptions = {
+  includeImageLanguage?: boolean
+}
+
+async function tmdbGet(path: string, options: TmdbGetOptions = {}): Promise<unknown> {
+  const url = new URL(`${BASE}${path}`)
+  url.searchParams.set('api_key', config.tmdbApiKey)
+  url.searchParams.set('language', config.tmdbLanguage)
+  if (options.includeImageLanguage) {
+    url.searchParams.set('include_image_language', buildTmdbImageLanguageList(config.tmdbLanguage))
+  }
+  const res = await fetch(url, {
     signal: AbortSignal.timeout(15_000),
   })
   if (!res.ok) throw new Error(`TMDB ${res.status} for ${path}`)
@@ -47,12 +57,11 @@ function latestSeasonNumber(seasons: Season[]): number {
 
 async function refreshShowMetadata(show: Show): Promise<Show> {
   try {
-    const r = await tmdbGet(`/tv/${show.tmdbId}?append_to_response=external_ids,images,content_ratings,keywords&include_image_language=en,null`) as
+    const r = await tmdbGet(`/tv/${show.tmdbId}?append_to_response=external_ids,images,content_ratings,keywords`, { includeImageLanguage: true }) as
       TmdbShowRaw & { external_ids?: { imdb_id?: string; tvdb_id?: number }; images?: TmdbImagesResponse; keywords?: TmdbKeywordsResponse }
     const imdbId = r.external_ids?.imdb_id ?? show.imdbId
     const tvdbId = r.external_ids?.tvdb_id ?? show.tvdbId
-    const mediaLanguage = (r.original_language ?? '').trim().toLowerCase() || await fetchSeriesLanguage(tvdbId)
-    const updated = { ...raw2show(r, imdbId, tvdbId, show.syncedAt), mediaLanguage }
+    const updated = raw2show(r, imdbId, tvdbId, show.syncedAt)
     upsertShow(updated)
     return getShowByTmdbId(show.tmdbId) ?? { id: show.id, ...updated }
   } catch {
@@ -63,7 +72,6 @@ async function refreshShowMetadata(show: Show): Promise<Show> {
 interface TmdbMovieRaw {
   id:            number
   title:         string
-  original_language?: string
   overview:      string
   poster_path:   string | null
   backdrop_path: string | null
@@ -165,7 +173,6 @@ function raw2movie(r: TmdbMovieRaw, imdbId = '', listedAt = ''): Omit<Movie, 'id
   return {
     tmdbId:             r.id,
     imdbId,
-    mediaLanguage:      (r.original_language ?? '').trim().toLowerCase(),
     title:              r.title,
     year:               parseYear(r.release_date),
     overview:           r.overview ?? '',
@@ -194,7 +201,7 @@ export async function refreshMovieMetadataIfNeeded(movie: Movie): Promise<void> 
   // Refresh if missing backdrop or release date info
   if (movie.backdropPath && movie.logoPath && movie.releaseDate && movie.officialRating && movie.communityRating && movie.studiosJson !== '[]') return
   try {
-    const r = await tmdbGet(`/movie/${movie.tmdbId}?append_to_response=external_ids,release_dates,images,keywords&include_image_language=en,null`) as
+    const r = await tmdbGet(`/movie/${movie.tmdbId}?append_to_response=external_ids,release_dates,images,keywords`, { includeImageLanguage: true }) as
       TmdbMovieRaw & { external_ids?: { imdb_id?: string }; images?: TmdbImagesResponse; keywords?: TmdbKeywordsResponse }
     const imdbId = r.external_ids?.imdb_id ?? movie.imdbId
     upsertMovie(raw2movie(r, imdbId))
@@ -203,19 +210,23 @@ export async function refreshMovieMetadataIfNeeded(movie: Movie): Promise<void> 
   }
 }
 
-export async function fetchMovieByTmdbId(tmdbId: number, listedAt = ''): Promise<Movie | null> {
+export async function fetchMovieByTmdbId(
+  tmdbId: number,
+  listedAt = '',
+  options: { forceRefresh?: boolean } = {},
+): Promise<Movie | null> {
   if (!config.tmdbApiKey) return null
   // Check cache first
   const cached = getMovieByTmdbId(tmdbId)
-  if (cached?.imdbId) return cached
+  if (cached?.imdbId && !options.forceRefresh) return cached
 
   try {
-    const r = await tmdbGet(`/movie/${tmdbId}?append_to_response=external_ids,release_dates,images,keywords&include_image_language=en,null`) as
+    const r = await tmdbGet(`/movie/${tmdbId}?append_to_response=external_ids,release_dates,images,keywords`, { includeImageLanguage: true }) as
       TmdbMovieRaw & { external_ids?: { imdb_id?: string }; images?: TmdbImagesResponse; keywords?: TmdbKeywordsResponse }
     const imdbId = r.external_ids?.imdb_id ?? ''
     const m = raw2movie(r, imdbId, listedAt)
     upsertMovie(m)
-    return { id: 0, ...m }
+    return { id: cached?.id ?? 0, ...m }
   } catch {
     return null
   }
@@ -228,7 +239,7 @@ export async function fetchMovieCollection(movieTmdbId: number): Promise<MovieCo
     const collection = movie.belongs_to_collection
     if (!collection?.id) return []
 
-    const raw = await tmdbGet(`/collection/${collection.id}?language=en-US`) as TmdbCollectionRaw
+    const raw = await tmdbGet(`/collection/${collection.id}`) as TmdbCollectionRaw
     return (raw.parts ?? [])
       .sort((a, b) => (a.release_date || '').localeCompare(b.release_date || '') || a.title.localeCompare(b.title))
       .map(part => ({
@@ -272,7 +283,6 @@ export function posterUrl(
 interface TmdbShowRaw {
   id:               number
   name:             string
-  original_language?: string
   overview:         string
   poster_path:      string | null
   backdrop_path:    string | null
@@ -312,7 +322,6 @@ function raw2show(r: TmdbShowRaw, imdbId = '', tvdbId = 0, listedAt = ''): Omit<
     tmdbId:       r.id,
     imdbId,
     tvdbId,
-    mediaLanguage: (r.original_language ?? '').trim().toLowerCase(),
     title:        r.name,
     year:         parseYear(r.first_air_date),
     overview:     r.overview ?? '',
@@ -331,20 +340,23 @@ function raw2show(r: TmdbShowRaw, imdbId = '', tvdbId = 0, listedAt = ''): Omit<
   }
 }
 
-export async function fetchShowByTmdbId(tmdbId: number, listedAt = ''): Promise<Show | null> {
+export async function fetchShowByTmdbId(
+  tmdbId: number,
+  listedAt = '',
+  options: { forceRefresh?: boolean } = {},
+): Promise<Show | null> {
   if (!config.tmdbApiKey) return null
   const cached = getShowByTmdbId(tmdbId)
-  if (cached?.imdbId && (!config.tvdbApiKey || cached.tvdbId)) return cached
+  if (cached?.imdbId && (!config.tvdbApiKey || cached.tvdbId) && !options.forceRefresh) return cached
 
   try {
-    const r = await tmdbGet(`/tv/${tmdbId}?append_to_response=external_ids,images,content_ratings,keywords&include_image_language=en,null`) as
+    const r = await tmdbGet(`/tv/${tmdbId}?append_to_response=external_ids,images,content_ratings,keywords`, { includeImageLanguage: true }) as
       TmdbShowRaw & { external_ids?: { imdb_id?: string; tvdb_id?: number }; images?: TmdbImagesResponse; keywords?: TmdbKeywordsResponse }
     const imdbId = r.external_ids?.imdb_id ?? ''
     const tvdbId = r.external_ids?.tvdb_id ?? 0
-    const mediaLanguage = (r.original_language ?? '').trim().toLowerCase() || await fetchSeriesLanguage(tvdbId)
-    const s = { ...raw2show(r, imdbId, tvdbId, listedAt), mediaLanguage }
+    const s = raw2show(r, imdbId, tvdbId, listedAt)
     upsertShow(s)
-    return { id: 0, ...s }
+    return { id: cached?.id ?? 0, ...s }
   } catch {
     return null
   }
@@ -445,7 +457,7 @@ export async function fetchAndCacheSeasonDetails(
 export async function refreshShowMetadataIfNeeded(show: Show): Promise<void> {
   if ((show.backdropPath && show.logoPath && show.officialRating && show.communityRating && show.studiosJson !== '[]' && (!config.tvdbApiKey || show.tvdbId)) || !config.tmdbApiKey) return
   try {
-    const r = await tmdbGet(`/tv/${show.tmdbId}?append_to_response=external_ids,images,content_ratings,keywords&include_image_language=en,null`) as
+    const r = await tmdbGet(`/tv/${show.tmdbId}?append_to_response=external_ids,images,content_ratings,keywords`, { includeImageLanguage: true }) as
       TmdbShowRaw & { external_ids?: { imdb_id?: string; tvdb_id?: number }; images?: TmdbImagesResponse; keywords?: TmdbKeywordsResponse }
     const imdbId = r.external_ids?.imdb_id ?? show.imdbId
     const tvdbId = r.external_ids?.tvdb_id ?? show.tvdbId
