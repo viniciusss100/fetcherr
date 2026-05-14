@@ -173,6 +173,7 @@ function raw2movie(r: TmdbMovieRaw, imdbId = '', listedAt = ''): Omit<Movie, 'id
   return {
     tmdbId:             r.id,
     imdbId,
+    metadataLanguage:   config.tmdbLanguage,
     title:              r.title,
     year:               parseYear(r.release_date),
     overview:           r.overview ?? '',
@@ -199,7 +200,7 @@ function raw2movie(r: TmdbMovieRaw, imdbId = '', listedAt = ''): Omit<Movie, 'id
 export async function refreshMovieMetadataIfNeeded(movie: Movie): Promise<void> {
   if (!config.tmdbApiKey) return
   // Refresh if missing backdrop or release date info
-  if (movie.backdropPath && movie.logoPath && movie.releaseDate && movie.officialRating && movie.communityRating && movie.studiosJson !== '[]') return
+  if (movie.metadataLanguage === config.tmdbLanguage && movie.backdropPath && movie.logoPath && movie.releaseDate && movie.officialRating && movie.communityRating && movie.studiosJson !== '[]') return
   try {
     const r = await tmdbGet(`/movie/${movie.tmdbId}?append_to_response=external_ids,release_dates,images,keywords`, { includeImageLanguage: true }) as
       TmdbMovieRaw & { external_ids?: { imdb_id?: string }; images?: TmdbImagesResponse; keywords?: TmdbKeywordsResponse }
@@ -322,6 +323,7 @@ function raw2show(r: TmdbShowRaw, imdbId = '', tvdbId = 0, listedAt = ''): Omit<
     tmdbId:       r.id,
     imdbId,
     tvdbId,
+    metadataLanguage: config.tmdbLanguage,
     title:        r.name,
     year:         parseYear(r.first_air_date),
     overview:     r.overview ?? '',
@@ -455,7 +457,7 @@ export async function fetchAndCacheSeasonDetails(
  * Only hits TMDB if the show is missing a backdrop.
  */
 export async function refreshShowMetadataIfNeeded(show: Show): Promise<void> {
-  if ((show.backdropPath && show.logoPath && show.officialRating && show.communityRating && show.studiosJson !== '[]' && (!config.tvdbApiKey || show.tvdbId)) || !config.tmdbApiKey) return
+  if (show.metadataLanguage === config.tmdbLanguage && ((show.backdropPath && show.logoPath && show.officialRating && show.communityRating && show.studiosJson !== '[]' && (!config.tvdbApiKey || show.tvdbId)) || !config.tmdbApiKey)) return
   try {
     const r = await tmdbGet(`/tv/${show.tmdbId}?append_to_response=external_ids,images,content_ratings,keywords`, { includeImageLanguage: true }) as
       TmdbShowRaw & { external_ids?: { imdb_id?: string; tvdb_id?: number }; images?: TmdbImagesResponse; keywords?: TmdbKeywordsResponse }
@@ -476,6 +478,18 @@ export async function ensureShowSeasonsCached(show: Show): Promise<void> {
   let cached = getSeasonsForShow(show.tmdbId)
   const cachedLatestSeason = latestSeasonNumber(cached)
   const cachedLatest = cached.find(season => season.seasonNumber === cachedLatestSeason)
+  if (effectiveShow.metadataLanguage !== config.tmdbLanguage) {
+    effectiveShow = await refreshShowMetadata(effectiveShow)
+    cached = getSeasonsForShow(effectiveShow.tmdbId)
+    const seasonNumbers = [...new Set([
+      ...cached.map(season => season.seasonNumber),
+      ...Array.from({ length: effectiveShow.numSeasons }, (_, idx) => idx + 1),
+    ])].filter(n => n > 0)
+    for (const n of seasonNumbers) {
+      await fetchAndCacheSeasonDetails(effectiveShow.tmdbId, n)
+    }
+    return
+  }
   if (config.tmdbApiKey && isOngoingShow(effectiveShow) && (!cachedLatest || isStaleSyncedAt(cachedLatest.syncedAt, ACTIVE_SHOW_REFRESH_MS))) {
     effectiveShow = await refreshShowMetadata(effectiveShow)
     cached = getSeasonsForShow(effectiveShow.tmdbId)
