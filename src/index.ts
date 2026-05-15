@@ -15,6 +15,7 @@ import {
   resolveStream as tbResolveStream,
   touchDownloadUrl as touchTorBoxDownloadUrl,
 } from './torbox.js'
+import { restoreDatabaseBackupIfNeeded, startDatabaseBackupSync } from './db-backup.js'
 import { getMovieByTmdbId, getShowByImdbId, getEpisodesForSeason, getLatestSeasonNumberForShow, listLatestSeasonShowSubscriptions, listMovies, listShows, pruneAllOrphanedMovies, pruneAllOrphanedShows, removeSourceKey, upsertManualShowSubscription } from './db.js'
 import { ensureShowSeasonsCached, refreshShowMetadataIfNeeded, refreshMovieMetadataIfNeeded } from './tmdb.js'
 import { getSessionUser, getTokenFromCookie, isUiAuthConfigured, isValidSession } from './ui/auth.js'
@@ -46,6 +47,36 @@ app.addHook('onRequest', async (_req, reply) => {
       "style-src 'self' 'unsafe-inline'",
     ].join('; '),
   )
+})
+
+let stopDatabaseBackupSync = async () => {}
+let shuttingDown = false
+
+async function shutdownApp() {
+  if (shuttingDown) return
+  shuttingDown = true
+  try {
+    await stopDatabaseBackupSync()
+  } catch (err) {
+    app.log.warn(`backup: shutdown flush failed: ${err}`)
+  }
+  try {
+    await app.close()
+  } catch (err) {
+    app.log.warn(`shutdown: app close failed: ${err}`)
+  }
+}
+
+process.once('SIGTERM', () => {
+  void shutdownApp().finally(() => process.exit(0))
+})
+
+process.once('SIGINT', () => {
+  void shutdownApp().finally(() => process.exit(0))
+})
+
+await restoreDatabaseBackupIfNeeded().catch(err => {
+  app.log.warn(`backup: restore skipped or failed: ${err}`)
 })
 
 // Initialise DB
@@ -1039,6 +1070,7 @@ function runSync(): Promise<void> {
   return currentSync
 }
 
+stopDatabaseBackupSync = startDatabaseBackupSync()
 runSync().catch(err => app.log.error(`Startup sync failed: ${err}`))
 setInterval(
   () => runSync().catch(err => app.log.error(`Scheduled sync failed: ${err}`)),

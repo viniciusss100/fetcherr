@@ -150,6 +150,10 @@ export function parsePositiveIntegerSetting(value: string | undefined, fallback:
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
 }
 
+function normalizeBaseUrl(value: string | undefined): string {
+  return (value ?? '').trim().replace(/\/$/, '')
+}
+
 export function normalizeTmdbLanguage(value: string | undefined, fallback = 'pt-BR'): string {
   const normalized = value?.trim().replaceAll('_', '-')
   if (!normalized) return fallback
@@ -184,6 +188,11 @@ export const config = {
   rdApiKey:      process.env.RD_API_KEY ?? '',
   torBoxApiKey:  process.env.TORBOX_API_KEY ?? '',
   torBoxUserIp:  process.env.TORBOX_USER_IP ?? '',
+  supabaseUrl: normalizeBaseUrl(process.env.SUPABASE_URL),
+  supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
+  supabaseBackupBucket: process.env.SUPABASE_BACKUP_BUCKET ?? 'fetcherr-backups',
+  supabaseBackupObject: process.env.SUPABASE_BACKUP_OBJECT ?? 'fetcherr.db',
+  supabaseBackupIntervalMinutes: parsePositiveIntegerSetting(process.env.SUPABASE_BACKUP_INTERVAL_MINUTES, 5),
   traktClientId:     process.env.TRAKT_CLIENT_ID ?? '',
   traktClientSecret: process.env.TRAKT_CLIENT_SECRET ?? '',
   traktUsername:     process.env.TRAKT_USERNAME ?? '',
@@ -203,5 +212,6 @@ export const config = {
   englishStreamMode: parseEnglishStreamMode(process.env.ENGLISH_STREAM_MODE ?? ''),
   directPlaybackMode: parseDirectPlaybackMode(process.env.DIRECT_PLAYBACK_MODE),
   torBoxPlaybackMode: parseTorBoxPlaybackMode(process.env.TORBOX_PLAYBACK_MODE),
+  supabaseBackupEnabled: Boolean(normalizeBaseUrl(process.env.SUPABASE_URL) && process.env.SUPABASE_SERVICE_ROLE_KEY),
   serverUrl:         (process.env.SERVER_URL ?? 'http://localhost:9990').replace(/\/$/, ''),
 }
