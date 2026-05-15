@@ -58,8 +58,37 @@ function markDatabaseDirty(): void {
   }, BACKUP_DEBOUNCE_MS)
 }
 
+async function ensureBackupBucket(): Promise<void> {
+  const response = await fetch(buildStorageUrl('bucket'), {
+    headers: getSupabaseHeaders(),
+  })
+  if (!response.ok) {
+    throw new Error(`Supabase bucket list failed with HTTP ${response.status}`)
+  }
+
+  const buckets = await response.json() as Array<{ name?: string }>
+  if (buckets.some(bucket => bucket.name === config.supabaseBackupBucket)) return
+
+  const createResponse = await fetch(buildStorageUrl('bucket'), {
+    method: 'POST',
+    headers: getSupabaseHeaders('application/json'),
+    body: JSON.stringify({
+      name: config.supabaseBackupBucket,
+    }),
+  })
+
+  if (createResponse.ok) return
+
+  const createText = await createResponse.text().catch(() => '')
+  const lowerText = createText.toLowerCase()
+  if (createResponse.status === 409 || lowerText.includes('already exists')) return
+  throw new Error(`Supabase bucket create failed with HTTP ${createResponse.status}: ${createText}`)
+}
+
 async function uploadDatabaseBackup(): Promise<void> {
   if (!isBackupConfigured()) return
+
+  await ensureBackupBucket()
 
   const tempPath = getDbTempPath()
   try {
@@ -113,6 +142,8 @@ export async function restoreDatabaseBackupIfNeeded(): Promise<boolean> {
   } catch {
     // No local database yet, continue with restore.
   }
+
+  await ensureBackupBucket()
 
   const response = await fetch(buildObjectUrl(config.supabaseBackupBucket, getBackupObjectPath()), {
     headers: getSupabaseHeaders(),
