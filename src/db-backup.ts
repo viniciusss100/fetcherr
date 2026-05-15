@@ -3,13 +3,11 @@ import { watch, type FSWatcher } from 'node:fs'
 import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { createClient } from '@supabase/supabase-js'
 import { config } from './config.js'
 import { getDb } from './db.js'
 
 const BACKUP_DEBOUNCE_MS = 15_000
 
-let backupClient: ReturnType<typeof createClient> | null = null
 let backupTimer: NodeJS.Timeout | null = null
 let backupInterval: NodeJS.Timeout | null = null
 let fileWatcher: FSWatcher | null = null
@@ -21,37 +19,26 @@ function isBackupConfigured(): boolean {
   return Boolean(config.supabaseUrl && config.supabaseServiceRoleKey)
 }
 
-function getBackupClient() {
-  if (!isBackupConfigured()) return null
-  if (!backupClient) {
-    backupClient = createClient(config.supabaseUrl, config.supabaseServiceRoleKey, {
-      auth: {
-        autoRefreshToken: false,
-        persistSession: false,
-      },
-    })
-  }
-  return backupClient
-}
-
-async function ensureBackupBucket(): Promise<void> {
-  const client = getBackupClient()
-  if (!client) return
-
-  const { data, error } = await client.storage.listBuckets()
-  if (error) throw error
-  if (data.some(bucket => bucket.name === config.supabaseBackupBucket)) return
-
-  const { error: createError } = await client.storage.createBucket(config.supabaseBackupBucket, {
-    public: false,
-  })
-  if (createError && !String(createError.message ?? '').toLowerCase().includes('already exists')) {
-    throw createError
-  }
-}
-
 function getBackupObjectPath(): string {
   return config.supabaseBackupObject.trim() || 'fetcherr.db'
+}
+
+function getSupabaseHeaders(contentType?: string): HeadersInit {
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${config.supabaseServiceRoleKey}`,
+    apikey: config.supabaseServiceRoleKey,
+  }
+  if (contentType) headers['Content-Type'] = contentType
+  return headers
+}
+
+function buildStorageUrl(path: string): string {
+  return `${config.supabaseUrl}/storage/v1/${path.replace(/^\/+/, '')}`
+}
+
+function buildObjectUrl(bucketName: string, objectPath: string): string {
+  const encodedObjectPath = objectPath.split('/').map(segment => encodeURIComponent(segment)).join('/')
+  return buildStorageUrl(`object/${encodeURIComponent(bucketName)}/${encodedObjectPath}`)
 }
 
 function getDbTempPath(): string {
@@ -73,20 +60,22 @@ function markDatabaseDirty(): void {
 
 async function uploadDatabaseBackup(): Promise<void> {
   if (!isBackupConfigured()) return
-  const client = getBackupClient()
-  if (!client) return
-
-  await ensureBackupBucket()
 
   const tempPath = getDbTempPath()
   try {
     await getDb().backup(tempPath)
     const snapshot = await readFile(tempPath)
-    const { error } = await client.storage.from(config.supabaseBackupBucket).upload(getBackupObjectPath(), snapshot, {
-      contentType: 'application/x-sqlite3',
-      upsert: true,
+    const response = await fetch(buildObjectUrl(config.supabaseBackupBucket, getBackupObjectPath()), {
+      method: 'PUT',
+      headers: getSupabaseHeaders('application/x-sqlite3'),
+      body: snapshot,
     })
-    if (error) throw error
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => '')
+      throw new Error(`Supabase backup upload failed with HTTP ${response.status}: ${text}`)
+    }
+
     databaseDirty = false
   } finally {
     await rm(tempPath, { force: true }).catch(() => {})
@@ -116,9 +105,6 @@ async function flushDatabaseBackup(force = false): Promise<void> {
 export async function restoreDatabaseBackupIfNeeded(): Promise<boolean> {
   if (!isBackupConfigured()) return false
 
-  const client = getBackupClient()
-  if (!client) return false
-
   await mkdir(dirname(config.dbPath), { recursive: true })
 
   try {
@@ -128,14 +114,14 @@ export async function restoreDatabaseBackupIfNeeded(): Promise<boolean> {
     // No local database yet, continue with restore.
   }
 
-  await ensureBackupBucket()
-
-  const { data, error } = await client.storage.from(config.supabaseBackupBucket).download(getBackupObjectPath())
-  if (error || !data) return false
+  const response = await fetch(buildObjectUrl(config.supabaseBackupBucket, getBackupObjectPath()), {
+    headers: getSupabaseHeaders(),
+  })
+  if (!response.ok) return false
 
   const tempPath = getRestoreTempPath()
   try {
-    const bytes = await data.arrayBuffer()
+    const bytes = await response.arrayBuffer()
     await writeFile(tempPath, Buffer.from(bytes))
     await rm(config.dbPath, { force: true }).catch(() => {})
     await rename(tempPath, config.dbPath)
@@ -172,9 +158,7 @@ export function startDatabaseBackupSync(): () => Promise<void> {
     backupInterval = null
     const watcher = fileWatcher
     fileWatcher = null
-    if (watcher && 'close' in watcher) {
-      watcher.close()
-    }
+    if (watcher) watcher.close()
     await flushDatabaseBackup(true).catch(() => {})
   }
 }
