@@ -15,7 +15,7 @@ import {
   resolveStream as tbResolveStream,
   touchDownloadUrl as touchTorBoxDownloadUrl,
 } from './torbox.js'
-import { restoreDatabaseBackupIfNeeded, startDatabaseBackupSync } from './db-backup.js'
+import { backupDatabaseNow, restoreDatabaseBackupIfNeeded, startDatabaseBackupSync } from './db-backup.js'
 import { getMovieByTmdbId, getShowByImdbId, getEpisodesForSeason, getLatestSeasonNumberForShow, listLatestSeasonShowSubscriptions, listMovies, listShows, pruneAllOrphanedMovies, pruneAllOrphanedShows, removeSourceKey, upsertManualShowSubscription } from './db.js'
 import { ensureShowSeasonsCached, refreshShowMetadataIfNeeded, refreshMovieMetadataIfNeeded } from './tmdb.js'
 import { getSessionUser, getTokenFromCookie, isUiAuthConfigured, isValidSession } from './ui/auth.js'
@@ -1071,7 +1071,9 @@ function runSync(): Promise<void> {
 }
 
 stopDatabaseBackupSync = startDatabaseBackupSync()
-runSync().catch(err => app.log.error(`Startup sync failed: ${err}`))
+runSync()
+  .then(() => backupDatabaseNow().catch(err => app.log.warn(`backup: initial flush failed: ${err}`)))
+  .catch(err => app.log.error(`Startup sync failed: ${err}`))
 setInterval(
   () => runSync().catch(err => app.log.error(`Scheduled sync failed: ${err}`)),
   60 * 60 * 1000,
