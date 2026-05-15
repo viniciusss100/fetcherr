@@ -26,6 +26,7 @@ import { normalizeSootioUrl, normalizeTmdbLanguage, parseAudioLanguage, parseBoo
 import { fetchMovieByTmdbId, fetchMovieCollection, fetchShowByTmdbId, ensureShowSeasonsCached } from '../tmdb.js'
 import { cleanupRemovedTraktListSources, fetchTraktUserLists } from '../trakt.js'
 import { cleanupRemovedMdblistListSources, normalizeMdblistListUrls } from '../mdblist.js'
+import { backupDatabaseNow } from '../db-backup.js'
 
 const __dir = dirname(fileURLToPath(import.meta.url))
 
@@ -907,6 +908,9 @@ export async function uiRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: String(err instanceof Error ? err.message : err) })
       }
     }
+    await backupDatabaseNow().catch(err => {
+      app.log.warn(`backup: settings flush failed: ${err}`)
+    })
     return { ok: true }
   })
 
