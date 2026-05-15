@@ -49,6 +49,9 @@ export function hasNonPreferredAudioMarker(text: string, language: AudioLanguage
 }
 
 export function preferredAudioPenalty(text: string, language: AudioLanguage): number {
+  if (language === 'pt' && PT_PREMIUM_AUDIO_MARKER_RE.test(text)) {
+    return 0
+  }
   return (Object.keys(AUDIO_LANGUAGE_ALIASES) as AudioLanguage[]).reduce((penalty, otherLanguage) => {
     if (otherLanguage === language) return penalty
     if (!hasAudioLanguageMarker(text, otherLanguage)) return penalty
