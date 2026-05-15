@@ -32,6 +32,7 @@ The developer of Fetcherr does not condone, encourage, or support using Fetcherr
 - A Real-Debrid API key or TorBox API key
 - Optional: TVDB API key for episode-image fallback
 - Optional: Trakt client ID and secret
+- Optional: Supabase Storage bucket for persisting SQLite data on ephemeral hosts such as Render free
 
 ## Debrid Providers
 
@@ -42,9 +43,6 @@ Real-Debrid and TorBox do not behave identically:
 - Real-Debrid playback can usually redirect clients directly to a resolved debrid URL.
 - TorBox playback is proxied through Fetcherr so Fetcherr can present media-player-friendly response headers, including byte-range behavior expected by Infuse and VidHub.
 - TorBox support has currently been tested with TorBox's official Stremio add-on. Other provider add-ons may work if they return usable torrent hashes or compatible TorBox-backed stream results, but they have not been validated as thoroughly.
-- If you want to support continued Fetcherr development while switching to TorBox, consider using my referral link: [TorBox referral](https://torbox.app/subscription?referral=517608ee-35cb-458f-be00-850a2543a4f0)
-
-Fetcherr now lets you choose a preferred audio language in Settings. It uses TMDB and TVDB metadata when available, then falls back to ffprobe on probeable files to confirm the selected language before playback.
 
 Because the providers differ, Fetcherr intentionally encourages choosing one provider instead of configuring both at the same time.
 
@@ -95,6 +93,25 @@ http://YOUR_SERVER:9990/ui/setup-admin
 4. Create the first admin account.
 5. Open Settings and enter your API keys, provider URLs, and any Trakt settings you want to use.
 
+### Persisting data on Render free
+
+If you run Fetcherr on an ephemeral host like Render's free web service, the local SQLite file can disappear on restart. To keep the database persistent without moving the whole app to PostgreSQL, point Fetcherr at Supabase Storage:
+
+1. Create a private Supabase Storage bucket named `fetcherr-backups`, or set `SUPABASE_BACKUP_BUCKET` to your preferred bucket name.
+2. Add these environment variables:
+
+```text
+SUPABASE_URL=https://your-project-ref.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+SUPABASE_BACKUP_BUCKET=fetcherr-backups
+SUPABASE_BACKUP_OBJECT=fetcherr.db
+SUPABASE_BACKUP_INTERVAL_MINUTES=5
+```
+
+3. Start Fetcherr normally.
+4. On boot, Fetcherr restores the latest SQLite backup if the local database file is missing.
+5. While the app runs, it keeps the backup file in sync automatically.
+
 ## Kubernetes
 
 1. Open [`deploy/kubernetes/fetcherr.yaml`](deploy/kubernetes/fetcherr.yaml).
@@ -120,6 +137,13 @@ Most runtime configuration should be entered in the web UI and is stored in Fetc
 | Variable | Required | Description |
 | --- | --- | --- |
 | `SERVER_URL` | Yes | External base URL used for playback redirects |
+| `PREFERRED_AUDIO_LANGUAGE` | No | Default preferred audio language shown in the UI. |
+| `TMDB_LANGUAGE` | No | TMDB metadata language. Defaults to `pt-BR`. |
+| `SUPABASE_URL` | No | Supabase project URL used for SQLite backup and restore on ephemeral hosts. |
+| `SUPABASE_SERVICE_ROLE_KEY` | No | Supabase service role key used for server-side storage access. |
+| `SUPABASE_BACKUP_BUCKET` | No | Storage bucket that holds the database backup. Defaults to `fetcherr-backups`. |
+| `SUPABASE_BACKUP_OBJECT` | No | Object name inside the bucket. Defaults to `fetcherr.db`. |
+| `SUPABASE_BACKUP_INTERVAL_MINUTES` | No | How often Fetcherr refreshes the backup while running. Defaults to `5`. |
 | `MDBLIST_MAX_ITEMS` | No | Advanced fallback: maximum MDBList items to import per list. Defaults to `1000`. |
 
 ## Tips
@@ -156,7 +180,7 @@ Most runtime configuration should be entered in the web UI and is stored in Fetc
 
 Both.
 
-Your add-on settings still matter because they control which streams each provider returns and which Stremio search results Fetcherr can surface. Fetcherr then ranks those returned streams using its own playback criteria, such as debrid cache availability, language preference, match quality, and format compatibility.
+Your add-on settings still matter because they control which streams each provider returns. Fetcherr then ranks those returned streams using its own playback criteria, such as debrid cache availability, language preference, match quality, and format compatibility.
 
 If you configure multiple provider URLs, Fetcherr also respects their order. Earlier providers are tried first, and Fetcherr then picks the best candidate within that provider's results before moving on to the next one.
 
@@ -168,15 +192,15 @@ With Real-Debrid, Fetcherr generally redirects the client to the resolved RD pla
 
 TorBox support has only been tested with TorBox's official Stremio add-on so far. For best results while testing TorBox, use that add-on and keep TorBox as the active provider in Settings.
 
-### How does the audio language setting work?
+### How does the English Audio setting work?
 
-Fetcherr has three audio-language modes:
+Fetcherr has three English-audio modes:
 
-- `Off`: ignores language markers during ranking and does not run language checks.
-- `Prefer selected language when available`: uses the selected language from provider metadata, filenames, indexer flags, and title metadata as a late tie-breaker. Fetcherr does not run ffprobe in this mode, so higher-quality neutral releases can still win.
-- `Require selected language audio`: skips streams that clearly indicate a different language, accepts streams that clearly indicate the selected language, and uses ffprobe to verify neutral probeable files such as MKV releases after the selected debrid provider resolves them.
+- `Off`: ignores English-language markers during ranking and does not run language checks.
+- `Prefer English when available`: uses English markers from provider metadata, filenames, or indexer flags as a late tie-breaker. Fetcherr does not run ffprobe in this mode, so higher-quality neutral releases can still win.
+- `Require English audio`: skips streams that clearly indicate non-English audio, accepts streams that clearly indicate English audio, and uses ffprobe to verify neutral probeable files such as MKV releases after the selected debrid provider resolves them.
 
-Remote MP4/M4V files are treated more conservatively in `Require selected language audio` because they are less reliable to probe before playback. In those cases, Fetcherr still needs clear metadata for the selected language.
+Remote MP4/M4V files are treated more conservatively in `Require English audio` because they are less reliable to probe before playback. In those cases, Fetcherr still needs clear English metadata.
 
 ### How do I connect Infuse?
 
